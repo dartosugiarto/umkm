@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Nama UMKM — Katalog Makanan</title>
-  <meta name="description" content="Flash sale & katalog makanan enak. Pesan via WhatsApp.">
+  <meta name="description" content="Katalog makanan enak. Pesan via WhatsApp.">
   <meta name="theme-color" content="#F97316">
   <link rel="icon" type="image/png" href="assets/images/logo.png">
   <link rel="apple-touch-icon" href="assets/images/logo.png">
@@ -14,17 +14,8 @@
   <link rel="stylesheet" href="assets/css/style.css">
   <script defer src="assets/js/script.js"></script>
 </head>
-<body>
+<body class="sidebar-open-false">
   <noscript><div class="noscript-warning">Aktifkan JavaScript agar fitur promo berfungsi.</div></noscript>
-
-  <!-- Promo Bar -->
-  <div id="promoBar" class="promo-bar">
-    <div class="promo-track" id="promoTrack">
-      <span>🔥 Flash Sale berakhir <strong id="promoDeadlineText">-</strong></span>
-      <span>🎟️ Klaim voucher: <strong id="activeCouponCode">-</strong></span>
-      <span>🚚 Gratis ongkir ≥ <strong id="freeShipText">-</strong></span>
-    </div>
-  </div>
 
   <header class="main-header">
     <div class="header-content">
@@ -34,6 +25,12 @@
       </a>
       <div class="header-actions">
         <div id="headerStatusIndicator" class="status-badge closed">TUTUP</div>
+        <button class.="icon-btn cart-btn" id="cartBtn" type="button" aria-label="Keranjang">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007zM8.625 10.5a.375.375 0 11-.75 0 .375.375 0 01.75 0zm7.5 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" />
+          </svg>
+          <span class="cart-count-badge" id="cartCountBadge">0</span>
+        </button>
         <button class="icon-btn burger" id="burgerBtn" type="button" aria-label="Menu" aria-expanded="false">
           <span></span><span></span><span></span>
         </button>
@@ -43,12 +40,21 @@
 
   <aside class="sidebar" id="sidebarNav">
     <nav class="sidebar-nav">
-      <a href="#" class="nav-item active" data-mode="accounts">
-        <div class="nav-icon" style="--icon-url: url('assets/images/game.svg')"></div>
+      <a href="#" class="nav-item active" data-page="catalogPage">
+        <div class.="nav-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+          </svg>
+        </div>
         <span>Katalog</span>
       </a>
-      <a href="#" class="nav-item" data-mode="promo">
-        <div class="nav-icon" style="--icon-url: url('assets/images/game.svg')"></div>
+      <a href="#" class="nav-item" data-page="promoPage">
+        <div class.="nav-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z" />
+          </svg>
+        </div>
         <span>Promo & Voucher</span>
       </a>
     </nav>
@@ -58,23 +64,12 @@
   <div class="page-container" id="pageContainer">
     <main class="wrap">
 
-      <!-- SECTION: Flash Deals (atas) -->
-      <section id="flashDealsSection" aria-label="Flash Sale">
-        <div class="deals-header">
-          <div class="deals-title">FLASH SALE</div>
-          <div class="deals-countdown" id="dealsCountdown"></div>
-        </div>
-        <div id="flashDealsRow" class="deals-row"></div>
-      </section>
-
-      <!-- SECTION: Product List Horizontal (bawah) -->
-      <section id="productListSection" aria-label="Katalog Produk">
+      <section id="catalogPage" class="page-section" aria-label="Katalog Produk">
         <header class="page-title-header">
           <h1>Menu Pilihan</h1>
-          <p class="page-subtitle">Rating dummy saja • Tanpa jarak & waktu</p>
         </header>
         <div id="productList" class="product-list"></div>
-        <div id="accountEmpty" class="empty" style="display:none">
+        <div id="productEmpty" class="empty" style="display:none">
           <div class="empty-content">
             <svg xmlns="http://www.w3.org/2000/svg" class="empty-icon" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
@@ -84,38 +79,72 @@
         </div>
       </section>
 
+      <section id="promoPage" class="page-section" aria-label="Promo & Voucher" style="display:none;">
+        <header class="page-title-header">
+          <h1>Promo & Voucher</h1>
+          <p class="page-subtitle">Pilih voucher untuk dipakai di keranjang</p>
+        </header>
+        <div id="promoList" class="promo-list"></div>
+        <div id="promoEmpty" class="empty" style="display:none">
+          <div class="empty-content">
+            <svg xmlns="http://www.w3.org/2000/svg" class="empty-icon" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z" />
+            </svg>
+            <p>Belum ada promo yang tersedia.</p>
+          </div>
+        </div>
+      </section>
+
     </main>
   </div>
 
-  <!-- Payment Modal (tetap) -->
-  <div id="paymentModal" class="modal-overlay">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="paymentModalTitle">Pilih Pembayaran</h2>
-        <button id="closeModalBtn" class="close-btn" type="button" aria-label="Tutup">&times;</button>
+  <div id="cartSheet" class="sheet-overlay">
+    <div class="sheet-content">
+      <div class="sheet-header">
+        <h2 id="cartSheetTitle">Keranjang Anda</h2>
+        <button id="closeSheetBtn" class="close-btn" type="button" aria-label="Tutup">&times;</button>
       </div>
-      <div class="modal-body">
-        <div class="item-recap">
-          <p><strong>Item:</strong> <span id="modalItemName"></span></p>
-          <p><strong>Harga:</strong> <span id="modalItemPrice"></span></p>
-          <p id="modalAppliedPromo" class="muted"></p>
+      
+      <div class="sheet-body">
+        <div id="cartItemsList" class="cart-items-list">
+          </div>
+        <div id="cartEmpty" class="empty-cart" style="display:none;">
+          <p>Keranjang masih kosong.</p>
         </div>
-        <div id="paymentOptionsContainer" class="payment-options"></div>
+        
+        <div class.="payment-section">
+          <h3>Pilih Pembayaran</h3>
+          <div id="paymentOptionsContainer" class="payment-options"></div>
+        </div>
+
         <div class="price-details">
-          <p>Fee: <span id="modalFee"></span></p>
-          <p><strong>Total: <span id="modalTotal"></span></strong></p>
+          <div class.="price-row">
+            <span>Subtotal</span>
+            <span id="cartSubtotal"></span>
+          </div>
+          <div class="price-row" id="cartDiscountRow" style="display:none;">
+            <span>Diskon (<span id="cartDiscountCode"></span>)</span>
+            <span id="cartDiscountAmount"></span>
+          </div>
+          <div class.="price-row">
+            <span>Biaya Transaksi</span>
+            <span id="cartFee"></span>
+          </div>
+          <div class="price-row total">
+            <strong>Total</strong>
+            <strong id="cartTotal"></strong>
+          </div>
         </div>
       </div>
-      <div class="modal-footer">
+      
+      <div class="sheet-footer">
         <a id="continueToWaBtn" class="wa-button" href="#" target="_blank" rel="noopener">Lanjutkan ke WhatsApp</a>
       </div>
     </div>
   </div>
 
-  <!-- Toast -->
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <!-- Org JSON-LD -->
   <script id="orgJsonLd" type="application/ld+json"></script>
 
   <script>
