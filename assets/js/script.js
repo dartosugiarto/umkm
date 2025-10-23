@@ -1,494 +1,356 @@
-(function () {
+
+(function(){
   'use strict';
-  
-  // KONFIGURASI BARU UNTUK UMKM
+
+  // === CONFIG (minimal, tetap bisa pakai voucher & WA) ===
   const config = {
-    sheetId: '10bjcfNHBP6jCnLE87pgk5rXgVS8Qwyu8hc-LXCkdqEE', // <-- ID Google Sheet BARU
-    sheets: {
-      // Hapus sheet yang tidak perlu
-      accounts: { name: 'Produk' }, // <-- Nama Sheet BARU
+    sheetId: '10bjcfNHBP6jCnLE87pgk5rXgVS8Qwyu8hc-LXCkdqEE',
+    sheets: { accounts: { name: 'Produk' } },
+    waNumber: '628XXXXXXXXX',
+    waGreeting: '*Halo, saya mau pesan produk ini:*',
+    flashSale: {
+      enabled: true,
+      start: '2025-10-20T08:00:00+07:00',
+      end:   '2025-10-30T22:00:00+07:00',
+      discountPercent: 20,
+      categories: ['Semua']
     },
-    waNumber: '628XXXXXXXXX', // <-- GANTI NOMOR WA UMKM
-    waGreeting: '*Halo, saya mau pesan produk ini:*', // <-- Sapaan WA BARU
+    coupons: [
+      { code: 'KENYANG10', type: 'percent', value: 10, minSubtotal: 50000, note: 'Diskon 10% min 50k' }
+    ],
+    freeShipping: { threshold: 150000 },
     paymentOptions: [
       { id: 'seabank', name: 'Seabank', feeType: 'fixed', value: 0 },
       { id: 'gopay', name: 'Gopay', feeType: 'fixed', value: 0 },
       { id: 'dana', name: 'Dana', feeType: 'fixed', value: 125 },
       { id: 'bank_to_dana', name: 'Bank ke Dana', feeType: 'fixed', value: 500 },
       { id: 'qris', name: 'Qris', feeType: 'percentage', value: 0.01 },
-    ],
+    ]
   };
 
-  // STATE YANG DIPERLUKAN SAJA
+  // === STATE & ELEMENTS ===
   const state = {
-    accounts: {
-      initialized: false,
-      allData: [],
-      activeCategory: 'Semua Kategori',
-    },
+    accounts: { initialized:false, allData:[] },
+    activeCoupon: null,
   };
-  
-  let currentSelectedItem = null;
-  let accountsFetchController;
-  let modalFocusTrap = { listener: null, focusableEls: [], firstEl: null, lastEl: null };
-  let elementToFocusOnModalClose = null;
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  function getElement(id) {
-    return document.getElementById(id);
-  }
-
-  // ELEMEN YANG DIPERLUKAN SAJA
-  const elements = {
-    sidebar: {
-      nav: getElement('sidebarNav'),
-      overlay: getElement('sidebarOverlay'),
-      burger: getElement('burgerBtn'),
-    },
-    navLinks: document.querySelectorAll('[data-mode]'),
-    viewAccounts: getElement('viewAccounts'),
-    headerStatusIndicator: getElement('headerStatusIndicator'),
+  const $ = (id)=>document.getElementById(id);
+  const els = {
+    flashDealsRow: $('flashDealsRow'),
+    dealsCountdown: $('dealsCountdown'),
+    productList: $('productList'),
+    empty: $('accountEmpty'),
+    headerStatusIndicator: $('headerStatusIndicator'),
+    promoDeadlineText: $('promoDeadlineText'),
+    activeCouponCode: $('activeCouponCode'),
+    freeShipText: $('freeShipText'),
     paymentModal: {
-      modal: getElement('paymentModal'),
-      closeBtn: getElement('closeModalBtn'),
-      itemName: getElement('modalItemName'),
-      itemPrice: getElement('modalItemPrice'),
-      optionsContainer: getElement('paymentOptionsContainer'),
-      fee: getElement('modalFee'),
-      total: getElement('modalTotal'),
-      waBtn: getElement('continueToWaBtn'),
+      modal:$('paymentModal'), closeBtn:$('closeModalBtn'),
+      itemName:$('modalItemName'), itemPrice:$('modalItemPrice'),
+      optionsContainer:$('paymentOptionsContainer'), fee:$('modalFee'),
+      total:$('modalTotal'), waBtn:$('continueToWaBtn'), appliedPromo:$('modalAppliedPromo')
     },
-    accounts: {
-      cardGrid: getElement('accountCardGrid'),
-      cardTemplate: getElement('accountCardTemplate'),
-      empty: getElement('accountEmpty'),
-      error: getElement('accountError'),
-      customSelect: {
-        wrapper: getElement('accountCustomSelectWrapper'),
-        btn: getElement('accountCustomSelectBtn'),
-        value: getElement('accountCustomSelectValue'),
-        options: getElement('accountCustomSelectOptions'),
-      },
-    },
+    toast: $('toast'),
+    promoList: $('promoList')
   };
 
-  function formatToIdr(value) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value); }
-  function getSheetUrl(sheetName, format = 'json') { const baseUrl = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq`; const encodedSheetName = encodeURIComponent(sheetName); return format === 'csv' ? `${baseUrl}?tqx=out:csv&sheet=${encodedSheetName}` : `${baseUrl}?sheet=${encodedSheetName}&tqx=out:json`; }
-
-async function fetchSheetCached(sheetName, format = 'json'){
-  const url = getSheetUrl(sheetName, format === 'csv' ? 'csv' : 'json');
-  const key = `pp_cache_${sheetName}_${format}`;
-  const cached = sessionStorage.getItem(key);
-  if (cached) {
-    // kick off background revalidate
-    try { fetch(url).then(r => r.text()).then(t => sessionStorage.setItem(key, t)); } catch(e) {}
-    return cached;
-  }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Network error: ${res.statusText}`);
-  const text = await res.text();
-  sessionStorage.setItem(key, text);
-  return text;
-}
-
-  function toggleCustomSelect(wrapper, forceOpen) { const btn = wrapper.querySelector('.custom-select-btn'); const isOpen = typeof forceOpen === 'boolean' ? forceOpen : !wrapper.classList.contains('open'); wrapper.classList.toggle('open', isOpen); btn.setAttribute('aria-expanded', isOpen); }
-
-function enhanceCustomSelectKeyboard(wrapper){
-  if (!wrapper) return;
-  const options = wrapper.querySelector('.custom-select-options');
-  const btn = wrapper.querySelector('.custom-select-btn');
-  if (!options || !btn) return;
-  options.setAttribute('role','listbox');
-  options.addEventListener('keydown', (e)=>{
-    const items = Array.from(options.querySelectorAll('.custom-select-option'));
-    if (!items.length) return;
-    let i = items.findIndex(o => o.classList.contains('highlight'));
-
-    const move = (delta)=>{
-      i = (i === -1 ? items.findIndex(o=>o.classList.contains('selected')) : i);
-      if (i === -1) i = 0;
-      i = (i + delta + items.length) % items.length;
-      items.forEach(o=>o.classList.remove('highlight'));
-      items[i].classList.add('highlight');
-      items[i].scrollIntoView({ block: 'nearest' });
-    };
-
-    if (e.key === 'ArrowDown'){ e.preventDefault(); move(1); }
-    if (e.key === 'ArrowUp'){ e.preventDefault(); move(-1); }
-    if (e.key === 'Home'){ e.preventDefault(); move(-9999); }
-    if (e.key === 'End'){ e.preventDefault(); move(9999); }
-    if (e.key === 'Enter'){ e.preventDefault(); if (i>-1) items[i].click(); }
-    if (e.key === 'Escape'){ e.preventDefault(); toggleCustomSelect(wrapper, false); btn.focus(); }
-  });
-}
-
-  function robustCsvParser(text) { const normalizedText = text.trim().replace(/\r\n/g, '\n'); const rows = []; let currentRow = []; let currentField = ''; let inQuotedField = false; for (let i = 0; i < normalizedText.length; i++) { const char = normalizedText[i]; if (inQuotedField) { if (char === '"') { if (i + 1 < normalizedText.length && normalizedText[i + 1] === '"') { currentField += '"'; i++; } else { inQuotedField = false; } } else { currentField += char; } } else { if (char === '"') { inQuotedField = true; } else if (char === ',') { currentRow.push(currentField); currentField = ''; } else if (char === '\n') { currentRow.push(currentField); rows.push(currentRow); currentRow = []; currentField = ''; } else { currentField += char; } } } currentRow.push(currentField); rows.push(currentRow); return rows; }
-  
-  function initializeCarousels(container) {
-    container.querySelectorAll('.carousel-container').forEach(carouselContainer => {
-      const track = carouselContainer.querySelector('.carousel-track');
-      const slides = carouselContainer.querySelectorAll('.carousel-slide');
-      const imageCount = slides.length;
-      if (imageCount > 1) {
-        const prevBtn = carouselContainer.querySelector('.prev');
-        const nextBtn = carouselContainer.querySelector('.next');
-        const indicators = carouselContainer.querySelectorAll('.indicator-dot');
-        let currentIndex = 0;
-        const update = () => {
-          if (!track || !prevBtn || !nextBtn || !indicators) return;
-          track.style.transform = `translateX(-${currentIndex * 100}%)`;
-          prevBtn.disabled = currentIndex === 0;
-          nextBtn.disabled = currentIndex >= imageCount - 1;
-          indicators.forEach((dot, i) => dot.classList.toggle('active', i === currentIndex));
-        };
-        nextBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (currentIndex < imageCount - 1) {
-            currentIndex++;
-            update();
-          }
-        });
-        prevBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (currentIndex > 0) {
-            currentIndex--;
-            update();
-          }
-        });
-        indicators.forEach(dot => dot.addEventListener('click', (e) => {
-          e.stopPropagation();
-          currentIndex = parseInt(e.target.dataset.index, 10);
-          update();
-        }));
-        update();
+  // === HELPERS ===
+  const formatToIdr = (v)=> new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(v);
+  const getSheetUrl = (sheetName, format='json') => {
+    const base = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq`;
+    const enc = encodeURIComponent(sheetName);
+    return format==='csv'? `${base}?tqx=out:csv&sheet=${enc}` : `${base}?sheet=${enc}&tqx=out:json`;
+  };
+  function robustCsvParser(text){
+    const t = text.trim().replace(/\r\n/g,'\n');
+    return t.split('\n').map(line=>{
+      const cells=[]; let f='',q=false;
+      for(let i=0;i<line.length;i++){
+        const ch=line[i];
+        if(q){ if(ch === '"'){ if(i+1<line.length && line[i+1] === '"'){ f+='"'; i++; } else q=false; } else f+=ch; }
+        else { if(ch === '"') q=true; else if(ch === ','){ cells.push(f); f=''; } else f+=ch; }
       }
+      cells.push(f); return cells;
     });
   }
-  
-  function setupExpandableCard(card, triggerSelector) {
-    const trigger = card.querySelector(triggerSelector);
-    if (trigger) {
-      const action = (e) => {
-        if (e.target.closest('a')) return;
-        card.classList.toggle('expanded');
-      };
-      trigger.addEventListener('click', action);
-      trigger.addEventListener('keydown', (e) => {
-        if ((e.key === 'Enter' || e.key === ' ') && !e.target.closest('a')) {
-          e.preventDefault();
-          action(e);
-        }
-      });
-    }
+  const toast = (msg)=>{ const t=els.toast; if(!t) return; t.textContent=msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 1800); };
+  const isOpen = ()=>{
+    const hour = parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Jakarta',hour:'2-digit',hour12:false}).format(new Date()),10);
+    return hour>=8 && hour<22;
+  };
+  function updateHeaderStatus(){
+    const open = isOpen();
+    els.headerStatusIndicator.textContent = open?'BUKA':'TUTUP';
+    els.headerStatusIndicator.className = `status-badge ${open?'success':'closed'}`;
   }
 
-  // FUNGSI INI DARI VERSI LAMA ANDA, UNTUK MEMFORMAT DESKRIPSI
-  function formatDescriptionToHTML(text) {
-    if (!text) return '';
-    return text.split('||').map(line => {
-        const trimmedLine = line.trim();
-        if (trimmedLine === '') {
-            return '<br>';
-        } else if (trimmedLine.endsWith(':')) {
-            return `<p class="spec-title">${trimmedLine.slice(0, -1)}</p>`;
-        } else if (trimmedLine.startsWith('\u203A')) { // Menggunakan Unicode Escape
-            return `<p class="spec-item spec-item-arrow">${trimmedLine.substring(1).trim()}</p>`;
-        } else if (trimmedLine.startsWith('-')) {
-            return `<p class="spec-item spec-item-dash">${trimmedLine.substring(1).trim()}</p>`;
-        } else if (trimmedLine.startsWith('#')) {
-            return `<p class="spec-hashtag">${trimmedLine}</p>`;
-        } else {
-            return `<p class="spec-paragraph">${trimmedLine}</p>`;
-        }
-    }).join('');
+  // === DATA ===
+  async function fetchSheetCached(sheetName, format='csv'){
+    const url = getSheetUrl(sheetName, format==='csv'?'csv':'json');
+    const key = `pp_cache_${sheetName}_${format}`;
+    const cached = sessionStorage.getItem(key);
+    if(cached){ try{ fetch(url).then(r=>r.text()).then(t=>sessionStorage.setItem(key,t)); }catch{}; return cached; }
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`Network error: ${res.statusText}`);
+    const text = await res.text();
+    sessionStorage.setItem(key, text);
+    return text;
   }
-  
-  function updateHeaderStatus() {
-    const now = new Date();
-    const options = { timeZone: 'Asia/Jakarta', hour: '2-digit', hour12: false };
-    const hour = parseInt(new Intl.DateTimeFormat('en-US', options).format(now), 10);
-    const indicator = elements.headerStatusIndicator;
-    // GANTI JAM BUKA/TUTUP DI SINI
-    if (hour >= 8 && hour < 22) { // Contoh: Buka dari jam 8 pagi sampai 10 malam
-      indicator.textContent = 'BUKA';
-      indicator.className = 'status-badge success';
-    } else {
-      indicator.textContent = 'TUTUP';
-      indicator.className = 'status-badge closed';
-    }
-  }
-  
-  function initializeApp() {
-    elements.sidebar.burger?.addEventListener('click', () => toggleSidebar());
-    elements.sidebar.overlay?.addEventListener('click', () => toggleSidebar(false));
-    elements.navLinks.forEach(link => {
-      link.addEventListener('click', e => {
-        if (link.dataset.mode) {
-          e.preventDefault();
-          setMode(link.dataset.mode);
-        }
-      });
+
+  function parseAccountsSheet(text){
+    const rows = robustCsvParser(text);
+    rows.shift(); // header
+    return rows.filter(r=>r && r.length>=5 && r[0]).map(r=>{
+      const category = r[0] || 'Lainnya';
+      const price = Number(r[1]) || 0;
+      const status = r[2] || 'Tersedia';
+      const description = r[3] || '';
+      const images = (r[4]||'').split(',').map(u=>u.trim()).filter(Boolean);
+      const stock = r.length>5 ? Math.max(0, parseInt(r[5]||'0',10)) : null;
+      const compareAt = r.length>6 ? Math.max(price, parseInt(r[6]||'0',10)) : null;
+      const flashSale = r.length>7 ? String(r[7]).trim().toLowerCase() === 'true' : false;
+      const title = `${category} (${formatToIdr(price)})`;
+      return { id:`prod_${Date.now()}_${Math.random()}`, category, price, status, description, images, stock, compareAt, flashSale, title };
     });
-    
-    // Hanya inisialisasi custom select untuk 'accounts'
-    if (elements.accounts.customSelect.btn) {
-      elements.accounts.customSelect.btn.addEventListener('click', (e) => { e.stopPropagation(); toggleCustomSelect(elements.accounts.customSelect.wrapper); });
-      enhanceCustomSelectKeyboard(elements.accounts.customSelect.wrapper);
-    }
+  }
 
-    elements.paymentModal.closeBtn.addEventListener('click', closePaymentModal);
-    elements.paymentModal.modal.addEventListener('click', e => { if (e.target === elements.paymentModal.modal) closePaymentModal(); });
-    
-    document.addEventListener('keydown', (e)=>{ if (e.key==='Escape'){ if (elements.accounts.customSelect.wrapper) { toggleCustomSelect(elements.accounts.customSelect.wrapper,false); } } });
-    document.addEventListener('click', (e) => {
-      if (elements.accounts.customSelect.wrapper) {
-        toggleCustomSelect(elements.accounts.customSelect.wrapper, false);
-      }
+  // === PRICING & PROMO ===
+  function flashActive(){
+    if(!config.flashSale.enabled) return false;
+    const n = new Date();
+    return n >= new Date(config.flashSale.start) && n <= new Date(config.flashSale.end);
+  }
+  function getFlashDiscount(price, categoryOrFlag){
+    if(!flashActive()) return 0;
+    // jika produk ditandai flashSale TRUE, selalu diskon
+    if(categoryOrFlag === true) return Math.round(price * (config.flashSale.discountPercent/100));
+    // fallback by category 'Semua'
+    const cats = config.flashSale.categories;
+    if(cats.includes('Semua')) return Math.round(price * (config.flashSale.discountPercent/100));
+    return 0;
+  }
+  function renderCountdown(el, deadline){
+    function tick(){
+      const diff = new Date(deadline) - new Date();
+      if(diff<=0){ el.textContent='Selesai'; clearInterval(t); return; }
+      const h=Math.floor(diff/3_600_000), m=Math.floor((diff%3_600_000)/60_000), s=Math.floor((diff%60_000)/1000);
+      el.textContent = `${h}j ${m}m ${s}d`;
+    }
+    tick(); const t=setInterval(tick,1000);
+  }
+
+  // === RENDER: FLASH DEALS ===
+  function renderFlashDeals(items){
+    const row = els.flashDealsRow;
+    row.innerHTML='';
+    const deals = items.filter(x=> x.flashSale === true);
+    if(!deals.length){ document.getElementById('flashDealsSection').style.display='none'; return; }
+    deals.forEach(acc=>{
+      const discount = getFlashDiscount(acc.price, true);
+      const discountedPrice = Math.max(0, acc.price - discount);
+      const offPct = acc.compareAt && acc.compareAt>discountedPrice
+        ? Math.round((acc.compareAt - discountedPrice)/acc.compareAt*100)
+        : (discount ? config.flashSale.discountPercent : 0);
+      const div = document.createElement('div');
+      div.className='deal-card';
+      const img = acc.images[0] || '';
+      div.innerHTML = `
+        <img class="deal-thumb" src="${img}" alt="Foto ${acc.category}">
+        <div class="deal-info">
+          <div class="deal-title">${acc.category}</div>
+          <div class="deal-price">
+            <span class="now">${formatToIdr(discount ? discountedPrice : acc.price)}</span>
+            <span class="was">${formatToIdr(acc.compareAt || acc.price)}</span>
+          </div>
+          <div class="deal-badges">
+            ${offPct ? `<span class="badge-off">-${offPct}%</span>` : ''}
+          </div>
+          <div class="action-row">
+            <button class="btn btn-primary">Beli</button>
+            <button class="btn btn-ghost">Tanya</button>
+          </div>
+        </div>`;
+      // actions
+      div.querySelector('.btn.btn-primary').addEventListener('click', ()=> openPaymentModal({
+        title: acc.title, price: acc.price, discounted: discount? discountedPrice : (acc.compareAt? Math.min(acc.compareAt, acc.price): acc.price), catLabel:'Produk'
+      }));
+      div.querySelector('.btn.btn-ghost').addEventListener('click', ()=> window.open(`https://wa.me/${config.waNumber}?text=${encodeURIComponent(`Halo, tanya ${acc.title}`)}`,'_blank','noopener'));
+      row.appendChild(div);
     });
-
-    // Cek mode dari URL, jika tidak valid, paksa ke 'accounts'
-    const validModes = ['accounts']; // Hanya 'accounts' yang valid sekarang
-    const initialMode = window.location.pathname.substring(1).toLowerCase() || 'accounts';
-    setMode(validModes.includes(initialMode) ? initialMode : 'accounts', true);
-
-    elements.headerStatusIndicator.style.display = 'inline-flex';
-    updateHeaderStatus();
-    setInterval(updateHeaderStatus, 60000);
-  }
-  
-  function toggleSidebar(forceOpen) {
-    const isOpen = typeof forceOpen === 'boolean' ? forceOpen : !document.body.classList.contains('sidebar-open');
-    document.body.classList.toggle('sidebar-open', isOpen);
-    elements.sidebar.burger.classList.toggle('active', isOpen);
-
-    const body = document.body;
-    if (isOpen) {
-      const y = window.scrollY || window.pageYOffset || 0;
-      body.dataset.ppLockY = String(y);
-      body.style.position = 'fixed';
-      body.style.top = `-${y}px`;
-      body.style.width = '100%';
-      body.style.overflow = 'hidden';
-    } else {
-      const y = parseInt(body.dataset.ppLockY || '0', 10);
-      body.style.position = '';
-      body.style.top = '';
-      body.style.width = '';
-      body.style.overflow = '';
-      window.scrollTo(0, y);
-    }
+    // countdown at header
+    if(flashActive()) renderCountdown(els.dealsCountdown, config.flashSale.end);
+    else els.dealsCountdown.textContent='';
   }
 
-  // FUNGSI SETMODE YANG DISIMPLIKASI
-  let setMode = function(nextMode, fromPopState = false) {
-    if (nextMode !== 'accounts') nextMode = 'accounts'; // Paksa ke 'accounts' jika mode tidak valid
+  // === RENDER: PRODUCT LIST HORIZONTAL (dummy rating only) ===
+  function randomRating(){ return (Math.random()*0.4 + 4.5).toFixed(1); } // 4.5 - 4.9
+  function randomReviews(){ return Math.floor(Math.random()*600) + 200; } // 200 - 799
 
-    const viewMap = { accounts: elements.viewAccounts };
-    const nextView = viewMap[nextMode];
-    if (!nextView) return;
+  function renderProductList(items){
+    const list = els.productList;
+    list.innerHTML='';
+    const data = items; // tampilkan semua; flash sale juga boleh muncul di bawah jika mau, atau filter
+    if(!data.length){ els.empty.style.display='flex'; return; }
+    els.empty.style.display='none';
+    data.forEach(acc=>{
+      const discount = getFlashDiscount(acc.price, acc.flashSale===true);
+      const discountedPrice = Math.max(0, acc.price - discount);
+      const img = acc.images[0] || '';
+      const rating = randomRating();
+      const reviews = randomReviews();
 
-    const pageName = "Katalog Produk"; // Judul halaman statis
-    
-    if (!fromPopState) {
-        const search = window.location.search;
-        // Selalu set path ke root '/' atau '/index.html'
-        const path = `/${search}`;
-        history.pushState({ mode: nextMode }, `Nama UMKM - ${pageName}`, path);
-    }
-    document.title = `Nama UMKM - ${pageName}`;
-    
-    document.querySelector('.view-section.active')?.classList.remove('active');
-    nextView.classList.add('active');
-    
-    elements.navLinks.forEach(link => {
-        const isActive = link.dataset.mode === nextMode;
-        link.classList.toggle('active', isActive);
-        isActive ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current');
+      const card = document.createElement('div');
+      card.className='prod-card';
+      card.innerHTML = `
+        <img class="prod-thumb" src="${img}" alt="Foto ${acc.category}">
+        <div class="prod-main">
+          <div class="prod-title">${acc.category}</div>
+          <div class="prod-meta"><span class="star">★</span>${rating} • ${reviews}+ ulasan</div>
+          <div class="prod-price-row">
+            <span class="prod-price">${formatToIdr(discount ? discountedPrice : acc.price)}</span>
+            ${(acc.compareAt && (acc.compareAt > (discount? discountedPrice: acc.price))) ? `<span class="prod-compare">${formatToIdr(acc.compareAt)}</span>` : ''}
+          </div>
+          <div class="prod-badges">
+            ${discount? `<span class="badge">Flash Sale -${config.flashSale.discountPercent}%</span>`:''}
+            ${(acc.compareAt && (acc.compareAt > (discount? discountedPrice: acc.price))) ? `<span class="badge">Hemat ${formatToIdr((acc.compareAt - (discount? discountedPrice: acc.price)))}</span>` : ''}
+          </div>
+          <div class="action-row">
+            <button class="btn btn-primary">Beli</button>
+            <button class="btn btn-ghost">Tanya</button>
+          </div>
+        </div>
+      `;
+      card.querySelector('.btn.btn-primary').addEventListener('click', ()=> openPaymentModal({
+        title: acc.title, price: acc.price, discounted: discount? discountedPrice : acc.price, catLabel:'Produk'
+      }));
+      card.querySelector('.btn.btn-ghost').addEventListener('click', ()=> window.open(`https://wa.me/${config.waNumber}?text=${encodeURIComponent(`Halo, tanya ${acc.title}`)}`,'_blank','noopener'));
+      list.appendChild(card);
     });
-    
-    if (window.innerWidth < 769) toggleSidebar(false);
-    
-    if (nextMode === 'accounts' && !state.accounts.initialized) {
-        initializeAccounts(); // Langsung panggil ini saat load
-    }
   }
 
-  function calculateFee(price, option) { if (option.feeType === 'fixed') return option.value; if (option.feeType === 'percentage') return Math.ceil(price * option.value); return 0; }
-  
-  function updatePriceDetails() { const selectedOptionId = document.querySelector('input[name="payment"]:checked')?.value; if (!selectedOptionId) return; const selectedOption = config.paymentOptions.find(opt => opt.id === selectedOptionId); if (!currentSelectedItem || !selectedOption) return; const price = currentSelectedItem.price; const fee = calculateFee(price, selectedOption); const total = price + fee; elements.paymentModal.fee.textContent = formatToIdr(fee); elements.paymentModal.total.textContent = formatToIdr(total); updateWaLink(selectedOption, fee, total); }
-
-  function updateWaLink(option, fee, total) {
-    const { catLabel = "Produk", title, price } = currentSelectedItem;
-    const text = [
+  // === PAYMENT MODAL (reused) ===
+  let currentSelectedItem=null;
+  function calculateFee(price, option){ if(option.feeType==='fixed') return option.value; if(option.feeType==='percentage') return Math.ceil(price * option.value); return 0; }
+  function applyCoupon(subtotal){
+    const c = state.activeCoupon?.code && config.coupons.find(k=>k.code===state.activeCoupon.code);
+    if(!c) return { code:null, discount:0, label:'' };
+    if(subtotal < (c.minSubtotal||0)) return { code:c.code, discount:0, label:`Min. belanja ${formatToIdr(c.minSubtotal)}` };
+    let d = 0; if(c.type==='percent') d=Math.floor(subtotal*(c.value/100)); else if(c.type==='fixed') d=c.value;
+    return { code:c.code, discount:d, label:c.note||'' };
+  }
+  function buildWAText({catLabel='Produk', title, price, discounted, paymentOption, fee, total}){
+    const parts=[
       config.waGreeting,
       `\u203A Tipe: ${catLabel}`,
       `\u203A Item: ${title}`,
-      `\u203A Pembayaran: ${option.name}`,
-      `\u203A Harga: ${formatToIdr(price)}`,
+      discounted && discounted < price ? `\u203A Harga Asli: ${formatToIdr(price)}` : null,
+      `\u203A Harga: ${formatToIdr(discounted && discounted < price ? discounted : price)}`,
+      state.activeCoupon?.code ? `\u203A Kode Voucher: ${state.activeCoupon.code}` : null,
+      `\u203A Pembayaran: ${paymentOption.name}`,
       `\u203A Fee: ${formatToIdr(fee)}`,
       `\u203A Total: ${formatToIdr(total)}`,
-    ].join('\n');
-    elements.paymentModal.waBtn.href = `https://wa.me/${config.waNumber}?text=${encodeURIComponent(text)}`;
+    ].filter(Boolean);
+    return parts.join('\n');
   }
-
-  function openPaymentModal(item) {
-    const pageContainer = document.getElementById('pageContainer');
-    const modalContentEl = document.querySelector('#paymentModal .modal-content');
-    if (modalContentEl){ modalContentEl.setAttribute('role','dialog'); modalContentEl.setAttribute('aria-modal','true'); modalContentEl.setAttribute('aria-labelledby','paymentModalTitle'); }
-    const modalTitle = document.querySelector('#paymentModal .modal-header h2');
-    if (modalTitle){ modalTitle.id = 'paymentModalTitle'; }
-    if (pageContainer){ pageContainer.setAttribute('inert',''); }
-    document.documentElement.style.overflow = "hidden"; document.body.style.overflow = "hidden";
-    elementToFocusOnModalClose = document.activeElement;
+  function openPaymentModal(item){
     currentSelectedItem = item;
-    const { modal, itemName, itemPrice, optionsContainer } = elements.paymentModal;
-    itemName.textContent = item.title;
-    itemPrice.textContent = formatToIdr(item.price);
-    optionsContainer.innerHTML = '';
-    config.paymentOptions.forEach((option, index) => {
-      const fee = calculateFee(item.price, option);
-      optionsContainer.insertAdjacentHTML('beforeend', ` <div class="payment-option"> <input type="radio" id="${option.id}" name="payment" value="${option.id}" ${index === 0 ? 'checked' : ''}> <label for="${option.id}" tabindex="0"> ${option.name} <span style="float: right;">+ ${formatToIdr(fee)}</span> </label> </div>`);
+    const base = item.discounted && item.discounted < item.price ? item.discounted : item.price;
+    els.paymentModal.itemName.textContent = item.title;
+    els.paymentModal.itemPrice.textContent = (item.discounted && item.discounted < item.price)
+      ? `${formatToIdr(item.discounted)} (Asli ${formatToIdr(item.price)})`
+      : formatToIdr(item.price);
+    // options
+    els.paymentModal.optionsContainer.innerHTML='';
+    config.paymentOptions.forEach((opt,i)=>{
+      const fee = calculateFee(base, opt);
+      els.paymentModal.optionsContainer.insertAdjacentHTML('beforeend', `
+        <div class="payment-option">
+          <input type="radio" id="${opt.id}" name="payment" value="${opt.id}" ${i===0?'checked':''}>
+          <label for="${opt.id}" tabindex="0">${opt.name} <span style="float:right;">+ ${formatToIdr(fee)}</span></label>
+        </div>`);
     });
-    optionsContainer.querySelectorAll('input[name="payment"]').forEach(input => input.addEventListener('change', updatePriceDetails));
+    els.paymentModal.optionsContainer.querySelectorAll('input[name="payment"]').forEach(inp=> inp.addEventListener('change', updatePriceDetails));
+    els.paymentModal.modal.style.display='flex';
+    setTimeout(()=> els.paymentModal.modal.classList.add('visible'), 10);
     updatePriceDetails();
-    modal.style.display = 'flex';
-    setTimeout(() => modal.classList.add('visible'), 10);
-    const focusableEls = modal.querySelectorAll('a[href]:not([disabled]), button:not([disabled]), input[type="radio"]:not([disabled])');
-    modalFocusTrap.focusableEls = Array.from(focusableEls);
-    modalFocusTrap.firstEl = modalFocusTrap.focusableEls[0];
-    modalFocusTrap.lastEl = modalFocusTrap.focusableEls[modalFocusTrap.focusableEls.length - 1];
-    modalFocusTrap.listener = function(e) { if (e.key !== 'Tab') return; if (e.shiftKey) { if (document.activeElement === modalFocusTrap.firstEl) { modalFocusTrap.lastEl.focus(); e.preventDefault(); } } else { if (document.activeElement === modalFocusTrap.lastEl) { modalFocusTrap.firstEl.focus(); e.preventDefault(); } } };
-    modal.addEventListener('keydown', modalFocusTrap.listener);
-    setTimeout(() => modalFocusTrap.firstEl?.focus(), 100);
   }
-  
-  function closePaymentModal() {
-    const pageContainer = document.getElementById('pageContainer');
-    if (pageContainer){ pageContainer.removeAttribute('inert'); }
-    document.documentElement.style.overflow = ""; document.body.style.overflow = "";
-    const { modal } = elements.paymentModal;
-    modal.classList.remove('visible');
-    if (modalFocusTrap.listener) modal.removeEventListener('keydown', modalFocusTrap.listener);
-    setTimeout(() => {
-      modal.style.display = 'none';
-      currentSelectedItem = null;
-      elementToFocusOnModalClose?.focus();
-    }, 200);
+  function updatePriceDetails(){
+    const selectedId = document.querySelector('input[name="payment"]:checked')?.value;
+    if(!selectedId || !currentSelectedItem) return;
+    const opt = config.paymentOptions.find(o=>o.id===selectedId);
+    const base = currentSelectedItem.discounted && currentSelectedItem.discounted < currentSelectedItem.price ? currentSelectedItem.discounted : currentSelectedItem.price;
+    const couponRes = applyCoupon(base);
+    const afterCoupon = Math.max(0, base - couponRes.discount);
+    const fee = calculateFee(afterCoupon, opt);
+    const total = afterCoupon + fee;
+    els.paymentModal.fee.textContent = formatToIdr(fee);
+    els.paymentModal.total.textContent = formatToIdr(total);
+    els.paymentModal.appliedPromo.textContent = couponRes.code ? `Voucher ${couponRes.code} terpakai (${couponRes.label})` : '';
+    els.paymentModal.waBtn.href = `https://wa.me/${config.waNumber}?text=${encodeURIComponent(buildWAText({
+      catLabel: currentSelectedItem.catLabel, title: currentSelectedItem.title, price: currentSelectedItem.price,
+      discounted: base, paymentOption: opt, fee, total
+    }))}`;
+  }
+  function closePaymentModal(){
+    els.paymentModal.modal.classList.remove('visible');
+    setTimeout(()=> { els.paymentModal.modal.style.display='none'; currentSelectedItem=null; }, 200);
   }
 
-  // --- FUNGSI UNTUK PRODUK (DARI ACCOUNTS) ---
-
-  function populateAccountCategorySelect() {
-    const { customSelect } = elements.accounts;
-    const { options, value } = customSelect;
-    
-    // Ambil kategori unik dari data produk
-    const categories = ['Semua Kategori', ...new Set(state.accounts.allData.map(item => item.category))];
-    
-    options.innerHTML = '';
-    value.textContent = state.accounts.activeCategory;
-    
-    categories.forEach((cat) => {
-      const el = document.createElement('div');
-      el.className = 'custom-select-option';
-      el.textContent = cat;
-      el.dataset.value = cat;
-      if (cat === state.accounts.activeCategory) el.classList.add('selected');
-      el.addEventListener('click', () => {
-        value.textContent = cat;
-        document.querySelector('#accountCustomSelectOptions .custom-select-option.selected')?.classList.remove('selected');
-        el.classList.add('selected');
-        toggleCustomSelect(customSelect.wrapper, false);
-        state.accounts.activeCategory = cat;
-        renderAccountCards();
+  // === PROMO PAGE (minimal) ===
+  function renderPromoPage(){
+    const list = document.getElementById('promoList');
+    if(!list) return;
+    list.innerHTML='';
+    const frag = document.createDocumentFragment();
+    const items = [
+      ...config.coupons.map(c=>({ title:`Kode: ${c.code}`, price: c.type==='percent' ? `${c.value}%` : `Rp${c.value}`, desc: c.note || '-', code: c.code })),
+      { title: 'Gratis Ongkir', price: `≥ ${formatToIdr(config.freeShipping.threshold)}`, desc: 'Otomatis saat total memenuhi syarat', code: null }
+    ];
+    items.forEach(p=>{
+      const div=document.createElement('div');
+      div.className='list-item';
+      div.innerHTML = `<span class="title">${p.title}</span><span class="price">${p.price}</span>`;
+      div.addEventListener('click', ()=>{
+        if(p.code){ state.activeCoupon = { code:p.code }; toast(`Kode ${p.code} diaktifkan`); document.getElementById('activeCouponCode').textContent=p.code; }
       });
-      options.appendChild(el);
+      frag.appendChild(div);
     });
-  }
-  
-  async function parseAccountsSheet(text) {
-    const rows = robustCsvParser(text);
-    rows.shift(); // Hapus header
-    
-    // Sesuaikan dengan 5 kolom Anda: Kategori, Harga, Status, Deskripsi, Gambar
-    return rows.filter(row => row && row.length >= 5 && row[0]).map(row => ({
-      id: `prod_${Date.now()}_${Math.random()}`,
-      category: row[0] || 'Lainnya',
-      price: Number(row[1]) || 0,
-      status: row[2] || 'Tersedia',
-      description: row[3] || 'Tidak ada deskripsi.',
-      images: (row[4] || '').split(',').map(url => url.trim()).filter(Boolean),
-      // Buat judul dari Kategori dan Harga
-      title: `${row[0] || 'Produk'} (${formatToIdr(Number(row[1]) || 0)})`, 
-    }));
-  }
-  
-  function renderAccountCards() {
-    const { cardGrid, cardTemplate, empty } = elements.accounts;
-    const filteredAccounts = state.accounts.allData.filter(acc => state.accounts.activeCategory === 'Semua Kategori' || acc.category === state.accounts.activeCategory);
-    cardGrid.innerHTML = '';
-    empty.style.display = filteredAccounts.length === 0 ? 'flex' : 'none';
-    if (filteredAccounts.length === 0) return;
-    
-    const fragment = document.createDocumentFragment();
-    filteredAccounts.forEach(account => {
-      const cardClone = cardTemplate.content.cloneNode(true);
-      const cardElement = cardClone.querySelector('.account-card');
-      const carouselWrapper = cardElement.querySelector('.account-card-carousel-wrapper');
-      
-      if (account.images.length > 0) {
-        const carouselContainer = document.createElement('div');
-        carouselContainer.className = 'carousel-container';
-        const slides = account.images.map(src => `<div class="carousel-slide"><img src="${src}" alt="Gambar detail untuk ${account.category}" loading="lazy"></div>`).join('');
-        const indicators = account.images.map((_, i) => `<button class="indicator-dot" data-index="${i}"></button>`).join('');
-        carouselContainer.innerHTML = `<div class="carousel-track">${slides}</div>${account.images.length > 1 ? `<button class="carousel-btn prev" type="button" aria-label="Gambar sebelumnya" disabled><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg></button><button class="carousel-btn next" type="button" aria-label="Gambar selanjutnya"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg></button><div class="carousel-indicators">${indicators}</div>` : ''}`;
-        carouselWrapper.appendChild(carouselContainer);
-      }
-      
-      cardElement.querySelector('h3').textContent = formatToIdr(account.price);
-      const statusBadge = cardElement.querySelector('.account-status-badge');
-      statusBadge.textContent = account.status;
-      // Ganti 'tersedia' dan 'habis'
-      statusBadge.className = `account-status-badge ${account.status.toLowerCase() === 'tersedia' ? 'available' : 'sold'}`;
-      
-      const specsContainer = cardElement.querySelector('.account-card-specs');
-      // Gunakan formatDescriptionToHTML untuk deskripsi
-      specsContainer.innerHTML = formatDescriptionToHTML(account.description);
-      
-      cardElement.querySelector('.action-btn.buy').addEventListener('click', () => openPaymentModal({ title: account.title, price: account.price, catLabel: 'Produk' }));
-      cardElement.querySelector('.action-btn.offer').addEventListener('click', () => window.open(`https://wa.me/${config.waNumber}?text=${encodeURIComponent(`Halo, saya mau bertanya tentang produk: ${account.title}`)}`, '_blank', 'noopener'));
-      
-      setupExpandableCard(cardElement, '.account-card-main-info');
-      fragment.appendChild(cardElement);
-    });
-    cardGrid.appendChild(fragment);
-    initializeCarousels(cardGrid);
-  }
-  
-  async function initializeAccounts() {
-    if (state.accounts.initialized) return;
-    state.accounts.initialized = true;
-    const { cardGrid, error, empty } = elements.accounts;
-    error.style.display = 'none'; empty.style.display = 'none';
-    cardGrid.innerHTML = ''; // Anda bisa tambahkan skeleton loader di sini jika mau
-    
-    try {
-      const accText = await fetchSheetCached(config.sheets.accounts.name, 'csv');
-      state.accounts.allData = await parseAccountsSheet(accText);
-      populateAccountCategorySelect();
-      renderAccountCards();
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Fetch Accounts failed:', err);
-      error.textContent = 'Gagal memuat data produk. Coba lagi nanti.';
-      error.style.display = 'block';
-    }
+    list.appendChild(frag);
   }
 
-  // --- INISIALISASI ---
-  
-  document.addEventListener('DOMContentLoaded', () => {
-    initializeApp();
-    // initializeTestimonialMarquee(); // Dihapus karena section testimonial dihapus
-  });
+  // === ORG JSON-LD ===
+  function injectOrgJsonLd(){
+    const el = document.getElementById('orgJsonLd'); if(!el) return;
+    const data = {"@context":"https://schema.org","@type":"Organization","name":"Nama UMKM","url":location.origin,"logo":location.origin + "/assets/images/logo.png","sameAs":[]};
+    el.textContent = JSON.stringify(data);
+  }
+
+  // === INIT ===
+  async function initialize(){
+    updateHeaderStatus(); setInterval(updateHeaderStatus, 60_000);
+    // promo bar meta
+    document.getElementById('promoDeadlineText').textContent =
+      new Date(config.flashSale.end).toLocaleString('id-ID',{ timeZone:'Asia/Jakarta', day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+    document.getElementById('activeCouponCode').textContent = config.coupons[0]?.code || '-';
+    document.getElementById('freeShipText').textContent = formatToIdr(config.freeShipping.threshold);
+
+    try{
+      const txt = await fetchSheetCached(config.sheets.accounts.name, 'csv');
+      state.accounts.allData = parseAccountsSheet(txt);
+      renderFlashDeals(state.accounts.allData);
+      renderProductList(state.accounts.allData);
+    }catch(e){
+      console.error(e);
+      els.empty.style.display='flex';
+    }
+
+    // countdown global di header flash section
+    if(flashActive()) renderCountdown(els.dealsCountdown, config.flashSale.end);
+    injectOrgJsonLd();
+
+    // wire modal close
+    els.paymentModal.closeBtn.addEventListener('click', closePaymentModal);
+    els.paymentModal.modal.addEventListener('click', (e)=>{ if(e.target===els.paymentModal.modal) closePaymentModal(); });
+  }
+
+  document.addEventListener('DOMContentLoaded', initialize);
 })();
