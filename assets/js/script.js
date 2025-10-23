@@ -202,11 +202,9 @@ function enhanceCustomSelectKeyboard(wrapper){
     if (!fromPopState) {
         const search = window.location.search;
         const path = `/${search}`;
-        // NAMA TOKO BARU
-        history.pushState({ mode: nextMode }, `Sambal Bezo - ${pageName}`, path);
+        history.pushState({ mode: nextMode }, `Nama UMKM - ${pageName}`, path);
     }
-    // NAMA TOKO BARU
-    document.title = `Sambal Bezo - ${pageName}`;
+    document.title = `Nama UMKM - ${pageName}`;
     
     document.querySelector('.view-section.active')?.classList.remove('active');
     nextView.classList.add('active');
