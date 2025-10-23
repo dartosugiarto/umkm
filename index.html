@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Katalog Produk UMKM</title>
+  <meta name="description" content="Lihat katalog produk makanan dan lainnya dari UMKM kami.">
+  
+  <link rel="icon" type="image/png" href="/assets/images/logo.png">
+  <link rel="apple-touch-icon" href="/assets/images/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/css/style.css">
+  <script src="/assets/js/script.js" defer></script>
+</head>
+<body>
+  <noscript>
+    <div class="noscript-warning">
+      Website ini membutuhkan JavaScript untuk berfungsi sepenuhnya. Silakan aktifkan JavaScript di browser Anda.
+    </div>
+  </noscript>
+  <header class="main-header">
+    <div class="header-content">
+        <a href="/" class="header-logo-link" data-mode="home">
+          <img src="/assets/images/logo.png" alt="Logo UMKM" class="header-logo">
+          <span class="header-title">Nama UMKM</span>
+        </a>
+        <div class="header-actions">
+          <div id="headerStatusIndicator"></div>
+          <button class="icon-btn burger" id="burgerBtn" type="button" aria-label="Menu" aria-expanded="false">
+              <span></span><span></span><span></span>
+          </button>
+        </div>
+    </div>
+  </header>
+  
+  <aside class="sidebar" id="sidebarNav">
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-mode="accounts">
+        <div class="nav-icon" style="--icon-url: url('/assets/images/game.svg')"></div>
+        <span>Katalog Produk</span>
+      </a>
+      </nav>
+  </aside>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+  
+  <div class="page-container" id="pageContainer">
+    <main class="wrap">
+
+      <section id="viewAccounts" class="view-section active" aria-label="Katalog Produk">
+        <header class="page-title-header">
+          <h1>Katalog Produk</h1>
+          <p class="page-subtitle">Temukan produk makanan dan lainnya dari UMKM kami.</p>
+        </header>
+        <div class="head-block">
+            <div class="topbar-grid" style="grid-template-columns: 1fr;">
+                <div class="custom-select-wrapper" id="accountCustomSelectWrapper">
+                  <button class="custom-select-btn" id="accountCustomSelectBtn" type="button" aria-haspopup="listbox" aria-expanded="false">
+                    <span id="accountCustomSelectValue">Pilih Kategori Produk</span>
+                    <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg>
+                  </button>
+                  <div class="custom-select-options" id="accountCustomSelectOptions" role="listbox"></div>
+                </div>
+            </div>
+        </div>
+        <div id="accountCardGrid" class="account-card-grid"></div>
+        <div id="accountEmpty" class="empty" style="display: none;">
+            <div class="empty-content">
+              <svg xmlns="http://www.w3.org/2000/svg" class="empty-icon" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+              </svg>
+              <p>Tidak ada produk dalam kategori ini.</p>
+            </div>
+        </div>
+        <section id="accountError" class="err" style="display:none"></section>
+      </section>
+
+      </main>
+  </div>
+  
+  <template id="accountCardTemplate">
+    <article class="account-card">
+      <div class="account-card-carousel-wrapper"></div>
+      <div class="account-card-main-info" role="button" tabindex="0">
+        <h3>Harga Produk</h3>
+        <div class="status-wrapper">
+          <span class="account-status-badge"></span>
+          <svg class="expand-indicator" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4-25 4.5a.75.75 0 01-1.08 0l-4-25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg>
+        </div>
+      </div>
+      <div class="account-card-details-wrapper">
+        <div class="account-card-specs"></div>
+        <div class="account-card-actions">
+          <button type="button" class="action-btn buy">Beli Sekarang</button>
+          <button type="button" class="action-btn offer">Tanya Admin</button> </div>
+      </div>
+    </article>
+  </template>
+  
+  <div id="paymentModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Pilih Pembayaran</h2>
+        <button id="closeModalBtn" class="close-btn" type="button" aria-label="Tutup">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="item-recap">
+          <p><strong>Item:</strong> <span id="modalItemName"></span></p>
+          <p><strong>Harga:</strong> <span id="modalItemPrice"></span></p>
+        </div>
+        <div id="paymentOptionsContainer" class="payment-options"></div>
+        <div class="price-details">
+          <p>Fee: <span id="modalFee"></span></p>
+          <p><strong>Total: <span id="modalTotal"></span></strong></p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <a id="continueToWaBtn" class="wa-button" href="#" target="_blank" rel="noopener">Lanjutkan ke WhatsApp</a>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const header = document.querySelector('.main-header');
+      function updateHeaderHeight() {
+        if (header) {
+          document.documentElement.style.setProperty('--header-height', `${header.offsetHeight}px`);
+        }
+      }
+      updateHeaderHeight();
+      window.addEventListener('resize', updateHeaderHeight);
+    });
+  </script>
+</body>
+</html>
