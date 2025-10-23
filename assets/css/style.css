@@ -61,6 +61,11 @@ a{color:inherit; text-decoration: none;}
   padding: 8px;
   color: var(--text);
 }
+/* Tambahan CSS untuk SVG di dalam .icon-btn */
+.icon-btn svg {
+  width: 100%;
+  height: 100%;
+}
 .icon-btn.cart-btn{position: relative;}
 .cart-count-badge{
   position: absolute;
@@ -273,7 +278,7 @@ body.sidebar-open .sidebar-overlay{opacity:1;pointer-events:auto}
 }
 .empty-cart { padding: 24px; text-align: center; color: var(--muted); }
 
-/* Pembayaran & Detail Harga (di dalam Sheet) */
+/* Pembayaran & Detail Harga (di dalam Sheet) - DIPERBAIKI */
 .payment-section { margin-top: 20px; }
 .payment-section h3 { margin: 0 0 8px 0; font-size: 1rem; }
 .payment-options{display:flex; flex-direction: column; gap:8px;}
