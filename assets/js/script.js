@@ -1,435 +1,515 @@
-(function () {
+(function(){
   'use strict';
-  
+
+  // === CONFIG (Data tetap di sini untuk kesederhanaan) ===
   const config = {
     sheetId: '10bjcfNHBP6jCnLE87pgk5rXgVS8Qwyu8hc-LXCkdqEE',
-    sheets: {
-      // Nama sheet Anda harus "Produk"
-      products: { name: 'Produk' },
+    sheets: { accounts: { name: 'Produk' } },
+    waNumber: '628XXXXXXXXX', // GANTI DENGAN NOMOR ANDA
+    waGreeting: '*Halo, saya mau pesan:*',
+    flashSale: {
+      enabled: true,
+      start: '2025-10-20T08:00:00+07:00', // Sesuaikan tanggal
+      end:   '2025-10-30T22:00:00+07:00', // Sesuaikan tanggal
+      discountPercent: 20,
+      categories: ['Semua']
     },
-    waNumber: '628XXXXXXXXX', // <-- GANTI NOMOR WA UMKM
-    waGreeting: '*Halo, saya mau pesan produk ini:*',
+    coupons: [
+      { code: 'KENYANG10', type: 'percent', value: 10, minSubtotal: 50000, note: 'Diskon 10% min 50k' }
+    ],
+    freeShipping: { threshold: 150000 },
     paymentOptions: [
       { id: 'seabank', name: 'Seabank', feeType: 'fixed', value: 0 },
       { id: 'gopay', name: 'Gopay', feeType: 'fixed', value: 0 },
       { id: 'dana', name: 'Dana', feeType: 'fixed', value: 125 },
       { id: 'bank_to_dana', name: 'Bank ke Dana', feeType: 'fixed', value: 500 },
       { id: 'qris', name: 'Qris', feeType: 'percentage', value: 0.01 },
-    ],
+    ]
   };
 
+  // === STATE & ELEMENTS ===
   const state = {
-    products: {
-      initialized: false,
-      allData: [],
-      activeCategory: 'Semua Kategori',
-    },
-  };
-  
-  let currentSelectedItem = null;
-  let productsFetchController;
-  let modalFocusTrap = { listener: null, focusableEls: [], firstEl: null, lastEl: null };
-  let elementToFocusOnModalClose = null;
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  function getElement(id) {
-    return document.getElementById(id);
-  }
-
-  const elements = {
-    sidebar: {
-      nav: getElement('sidebarNav'),
-      overlay: getElement('sidebarOverlay'),
-      burger: getElement('burgerBtn'),
-    },
-    navLinks: document.querySelectorAll('[data-mode]'),
-    viewProducts: getElement('viewProducts'), // Ganti dari viewAccounts
-    headerStatusIndicator: getElement('headerStatusIndicator'),
-    paymentModal: {
-      modal: getElement('paymentModal'),
-      closeBtn: getElement('closeModalBtn'),
-      itemName: getElement('modalItemName'),
-      itemPrice: getElement('modalItemPrice'),
-      optionsContainer: getElement('paymentOptionsContainer'),
-      fee: getElement('modalFee'),
-      total: getElement('modalTotal'),
-      waBtn: getElement('continueToWaBtn'),
-    },
-    products: { // Ganti dari accounts
-      cardGrid: getElement('productCardGrid'),
-      cardTemplate: getElement('productItemTemplate'), // Ganti nama template
-      empty: getElement('productEmpty'),
-      error: getElement('productError'),
-      customSelect: {
-        wrapper: getElement('productCustomSelectWrapper'),
-        btn: getElement('productCustomSelectBtn'),
-        value: getElement('productCustomSelectValue'),
-        options: getElement('productCustomSelectOptions'),
-      },
-    },
+    accounts: { initialized:false, allData:[] },
+    activeCoupon: null,
+    cart: [], // STATE BARU: Keranjang Belanja
+    activePayment: config.paymentOptions[0].id,
   };
 
-  function formatToIdr(value) { return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value); }
-  function getSheetUrl(sheetName, format = 'json') { const baseUrl = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq`; const encodedSheetName = encodeURIComponent(sheetName); return format === 'csv' ? `${baseUrl}?tqx=out:csv&sheet=${encodedSheetName}` : `${baseUrl}?sheet=${encodedSheetName}&tqx=out:json`; }
+  const $ = (id)=>document.getElementById(id);
+  const els = {
+    // Navigasi Halaman
+    sidebarNav: $('sidebarNav'),
+    sidebarOverlay: $('sidebarOverlay'),
+    burgerBtn: $('burgerBtn'),
+    pageContainer: $('pageContainer'),
+    catalogPage: $('catalogPage'),
+    promoPage: $('promoPage'),
+    
+    // Katalog
+    productList: $('productList'),
+    productEmpty: $('productEmpty'),
+    
+    // Promo
+    promoList: $('promoList'),
+    promoEmpty: $('promoEmpty'),
+    
+    // Header
+    headerStatusIndicator: $('headerStatusIndicator'),
+    cartBtn: $('cartBtn'),
+    cartCountBadge: $('cartCountBadge'),
+    
+    // Keranjang (Sheet)
+    cartSheet: $('cartSheet'),
+    closeSheetBtn: $('closeSheetBtn'),
+    cartItemsList: $('cartItemsList'),
+    cartEmpty: $('cartEmpty'),
+    paymentOptionsContainer: $('paymentOptionsContainer'),
+    cartSubtotal: $('cartSubtotal'),
+    cartDiscountRow: $('cartDiscountRow'),
+    cartDiscountCode: $('cartDiscountCode'),
+    cartDiscountAmount: $('cartDiscountAmount'),
+    cartFee: $('cartFee'),
+    cartTotal: $('cartTotal'),
+    continueToWaBtn: $('continueToWaBtn'),
+    
+    // Lain-lain
+    toast: $('toast'),
+  };
 
-async function fetchSheetCached(sheetName, format = 'json'){
-  const url = getSheetUrl(sheetName, format === 'csv' ? 'csv' : 'json');
-  const key = `pp_cache_${sheetName}_${format}`;
-  const cached = sessionStorage.getItem(key);
-  if (cached) {
-    try { fetch(url).then(r => r.text()).then(t => sessionStorage.setItem(key, t)); } catch(e) {}
-    return cached;
+  // === HELPERS ===
+  const formatToIdr = (v)=> new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(v);
+  const getSheetUrl = (sheetName, format='json') => {
+    const base = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq`;
+    const enc = encodeURIComponent(sheetName);
+    return format==='csv'? `${base}?tqx=out:csv&sheet=${enc}` : `${base}?sheet=${enc}&tqx=out:json`;
+  };
+  function robustCsvParser(text){
+    const t = text.trim().replace(/\r\n/g,'\n');
+    return t.split('\n').map(line=>{
+      const cells=[]; let f='',q=false;
+      for(let i=0;i<line.length;i++){
+        const ch=line[i];
+        if(q){ if(ch === '"'){ if(i+1<line.length && line[i+1] === '"'){ f+='"'; i++; } else q=false; } else f+=ch; }
+        else { if(ch === '"') q=true; else if(ch === ','){ cells.push(f); f=''; } else f+=ch; }
+      }
+      cells.push(f); return cells;
+    });
   }
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Network error: ${res.statusText}`);
-  const text = await res.text();
-  sessionStorage.setItem(key, text);
-  return text;
-}
+  const toast = (msg)=>{ const t=els.toast; if(!t) return; t.textContent=msg; t.classList.add('show'); setTimeout(()=> t.classList.remove('show'), 1800); };
+  const isOpen = ()=>{
+    const hour = parseInt(new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Jakarta',hour:'2-digit',hour12:false}).format(new Date()),10);
+    return hour>=8 && hour<22;
+  };
+  function updateHeaderStatus(){
+    const open = isOpen();
+    els.headerStatusIndicator.textContent = open?'BUKA':'TUTUP';
+    els.headerStatusIndicator.className = `status-badge ${open?'success':'closed'}`;
+  }
 
-  function toggleCustomSelect(wrapper, forceOpen) { const btn = wrapper.querySelector('.custom-select-btn'); const isOpen = typeof forceOpen === 'boolean' ? forceOpen : !wrapper.classList.contains('open'); wrapper.classList.toggle('open', isOpen); btn.setAttribute('aria-expanded', isOpen); }
+  // === DATA FETCHING ===
+  async function fetchSheetCached(sheetName, format='csv'){
+    const url = getSheetUrl(sheetName, format==='csv'?'csv':'json');
+    const key = `pp_cache_${sheetName}_${format}`;
+    const cached = sessionStorage.getItem(key);
+    if(cached){ try{ fetch(url).then(r=>r.text()).then(t=>sessionStorage.setItem(key,t)); }catch{}; return cached; }
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`Network error: ${res.statusText}`);
+    const text = await res.text();
+    sessionStorage.setItem(key, text);
+    return text;
+  }
 
-function enhanceCustomSelectKeyboard(wrapper){
-  if (!wrapper) return;
-  const options = wrapper.querySelector('.custom-select-options');
-  const btn = wrapper.querySelector('.custom-select-btn');
-  if (!options || !btn) return;
-  options.setAttribute('role','listbox');
-  options.addEventListener('keydown', (e)=>{
-    const items = Array.from(options.querySelectorAll('.custom-select-option'));
-    if (!items.length) return;
-    let i = items.findIndex(o => o.classList.contains('highlight'));
-    const move = (delta)=>{
-      i = (i === -1 ? items.findIndex(o=>o.classList.contains('selected')) : i);
-      if (i === -1) i = 0;
-      i = (i + delta + items.length) % items.length;
-      items.forEach(o=>o.classList.remove('highlight'));
-      items[i].classList.add('highlight');
-      items[i].scrollIntoView({ block: 'nearest' });
-    };
-    if (e.key === 'ArrowDown'){ e.preventDefault(); move(1); }
-    if (e.key === 'ArrowUp'){ e.preventDefault(); move(-1); }
-    if (e.key === 'Home'){ e.preventDefault(); move(-9999); }
-    if (e.key === 'End'){ e.preventDefault(); move(9999); }
-    if (e.key === 'Enter'){ e.preventDefault(); if (i>-1) items[i].click(); }
-    if (e.key === 'Escape'){ e.preventDefault(); toggleCustomSelect(wrapper, false); btn.focus(); }
-  });
-}
+  function parseAccountsSheet(text){
+    const rows = robustCsvParser(text);
+    rows.shift(); // header
+    return rows.filter(r=>r && r.length>=5 && r[0]).map((r, index)=>{
+      const category = r[0] || 'Lainnya';
+      const price = Number(r[1]) || 0;
+      const status = r[2] || 'Tersedia';
+      const description = r[3] || '';
+      const images = (r[4]||'').split(',').map(u=>u.trim()).filter(Boolean);
+      const stock = r.length>5 ? Math.max(0, parseInt(r[5]||'0',10)) : null;
+      const compareAt = r.length>6 ? Math.max(price, parseInt(r[6]||'0',10)) : null;
+      const flashSale = r.length>7 ? String(r[7]).trim().toLowerCase() === 'true' : false;
+      const title = `${category} (${formatToIdr(price)})`;
+      return { id:`prod_${index}`, category, price, status, description, images, stock, compareAt, flashSale, title };
+    });
+  }
 
-  function robustCsvParser(text) { const normalizedText = text.trim().replace(/\r\n/g, '\n'); const rows = []; let currentRow = []; let currentField = ''; let inQuotedField = false; for (let i = 0; i < normalizedText.length; i++) { const char = normalizedText[i]; if (inQuotedField) { if (char === '"') { if (i + 1 < normalizedText.length && normalizedText[i + 1] === '"') { currentField += '"'; i++; } else { inQuotedField = false; } } else { currentField += char; } } else { if (char === '"') { inQuotedField = true; } else if (char === ',') { currentRow.push(currentField); currentField = ''; } else if (char === '\n') { currentRow.push(currentField); rows.push(currentRow); currentRow = []; currentField = ''; } else { currentField += char; } } } currentRow.push(currentField); rows.push(currentRow); return rows; }
+  // === PRICING & PROMO ===
+  function flashActive(){
+    if(!config.flashSale.enabled) return false;
+    const n = new Date();
+    return n >= new Date(config.flashSale.start) && n <= new Date(config.flashSale.end);
+  }
   
-  function updateHeaderStatus() {
-    const now = new Date();
-    const options = { timeZone: 'Asia/Jakarta', hour: '2-digit', hour12: false };
-    const hour = parseInt(new Intl.DateTimeFormat('en-US', options).format(now), 10);
-    const indicator = elements.headerStatusIndicator;
-    if (hour >= 8 && hour < 22) {
-      indicator.textContent = 'BUKA';
-      indicator.className = 'status-badge success';
-    } else {
-      indicator.textContent = 'TUTUP';
-      indicator.className = 'status-badge closed';
+  function getDiscountPrice(item) {
+    if (flashActive() && item.flashSale) {
+      const discount = Math.round(item.price * (config.flashSale.discountPercent / 100));
+      return Math.max(0, item.price - discount);
     }
+    return item.price;
+  }
+
+  function applyCoupon(subtotal){
+    const c = state.activeCoupon?.code && config.coupons.find(k=>k.code===state.activeCoupon.code);
+    if(!c) return { code:null, discount:0, label:'' };
+    if(subtotal < (c.minSubtotal||0)) return { code:c.code, discount:0, label:`Min. belanja ${formatToIdr(c.minSubtotal)}` };
+    let d = 0; if(c.type==='percent') d=Math.floor(subtotal*(c.value/100)); else if(c.type==='fixed') d=c.value;
+    return { code:c.code, discount:d, label:c.note||'' };
   }
   
-  function initializeApp() {
-    elements.sidebar.burger?.addEventListener('click', () => toggleSidebar());
-    elements.sidebar.overlay?.addEventListener('click', () => toggleSidebar(false));
-    elements.navLinks.forEach(link => {
-      link.addEventListener('click', e => {
-        if (link.dataset.mode) {
-          e.preventDefault();
-          setMode(link.dataset.mode);
+  function calculateFee(price, option){ 
+    if(option.feeType==='fixed') return option.value; 
+    if(option.feeType==='percentage') return Math.ceil(price * option.value); 
+    return 0; 
+  }
+  
+  // === RENDER: PRODUCT LIST (Utama) ===
+  function renderProductList(items){
+    const list = els.productList;
+    list.innerHTML='';
+    if(!items.length){ els.productEmpty.style.display='flex'; return; }
+    els.productEmpty.style.display='none';
+    
+    const onFlashSale = flashActive();
+
+    items.forEach(acc=>{
+      const currentPrice = getDiscountPrice(acc);
+      const isOnSale = currentPrice < acc.price;
+      const comparePrice = acc.compareAt && acc.compareAt > currentPrice ? acc.compareAt : (isOnSale ? acc.price : null);
+      
+      const img = acc.images[0] || '';
+      
+      const card = document.createElement('div');
+      card.className='prod-card';
+      card.innerHTML = `
+        <img class="prod-thumb" src="${img}" alt="Foto ${acc.category}">
+        <div class="prod-main">
+          <div class="prod-title">${acc.category}</div>
+          <div class="prod-meta"><span class="star">★</span>4.8 • 1k+ ulasan</div>
+          <div class="prod-price-row">
+            <span class="prod-price">${formatToIdr(currentPrice)}</span>
+            ${comparePrice ? `<span class="prod-compare">${formatToIdr(comparePrice)}</span>` : ''}
+          </div>
+          <div class="prod-badges">
+            ${onFlashSale && acc.flashSale ? `<span class="badge">Flash Sale -${config.flashSale.discountPercent}%</span>`:''}
+            ${(comparePrice && !isOnSale) ? `<span class="badge">Hemat ${formatToIdr(comparePrice - currentPrice)}</span>` : ''}
+          </div>
+          <div class="action-row">
+            <button class="btn btn-primary" data-id="${acc.id}">Tambah</button>
+            <button class="btn btn-ghost" data-id="${acc.id}">Tanya</button>
+          </div>
+        </div>
+      `;
+      // --- Event Listeners ---
+      const primaryBtn = card.querySelector('.btn.btn-primary');
+      const ghostBtn = card.querySelector('.btn.btn-ghost');
+      
+      primaryBtn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.id;
+        const product = state.accounts.allData.find(p => p.id === id);
+        if (product) {
+          addToCart(product);
+          toast(`${product.category} ditambah ke keranjang`);
         }
       });
-    });
-    
-    if (elements.products.customSelect.btn) {
-      elements.products.customSelect.btn.addEventListener('click', (e) => { e.stopPropagation(); toggleCustomSelect(elements.products.customSelect.wrapper); });
-      enhanceCustomSelectKeyboard(elements.products.customSelect.wrapper);
-    }
-
-    elements.paymentModal.closeBtn.addEventListener('click', closePaymentModal);
-    elements.paymentModal.modal.addEventListener('click', e => { if (e.target === elements.paymentModal.modal) closePaymentModal(); });
-    
-    document.addEventListener('keydown', (e)=>{ if (e.key==='Escape'){ if (elements.products.customSelect.wrapper) { toggleCustomSelect(elements.products.customSelect.wrapper,false); } } });
-    document.addEventListener('click', (e) => {
-      if (elements.products.customSelect.wrapper) {
-        toggleCustomSelect(elements.products.customSelect.wrapper, false);
-      }
-    });
-
-    const validModes = ['products'];
-    const initialMode = window.location.pathname.substring(1).toLowerCase() || 'products';
-    setMode(validModes.includes(initialMode) ? initialMode : 'products', true);
-
-    elements.headerStatusIndicator.style.display = 'inline-flex';
-    updateHeaderStatus();
-    setInterval(updateHeaderStatus, 60000);
-  }
-  
-  function toggleSidebar(forceOpen) {
-    const isOpen = typeof forceOpen === 'boolean' ? forceOpen : !document.body.classList.contains('sidebar-open');
-    document.body.classList.toggle('sidebar-open', isOpen);
-    elements.sidebar.burger.classList.toggle('active', isOpen);
-    const body = document.body;
-    if (isOpen) {
-      const y = window.scrollY || window.pageYOffset || 0;
-      body.dataset.ppLockY = String(y);
-      body.style.position = 'fixed';
-      body.style.top = `-${y}px`;
-      body.style.width = '100%';
-      body.style.overflow = 'hidden';
-    } else {
-      const y = parseInt(body.dataset.ppLockY || '0', 10);
-      body.style.position = '';
-      body.style.top = '';
-      body.style.width = '';
-      body.style.overflow = '';
-      window.scrollTo(0, y);
-    }
-  }
-
-  let setMode = function(nextMode, fromPopState = false) {
-    if (nextMode !== 'products') nextMode = 'products';
-
-    const viewMap = { products: elements.viewProducts };
-    const nextView = viewMap[nextMode];
-    if (!nextView) return;
-
-    const pageName = "Katalog Produk";
-    
-    if (!fromPopState) {
-        const search = window.location.search;
-        const path = `/${search}`;
-        history.pushState({ mode: nextMode }, `Nama UMKM - ${pageName}`, path);
-    }
-    document.title = `Nama UMKM - ${pageName}`;
-    
-    document.querySelector('.view-section.active')?.classList.remove('active');
-    nextView.classList.add('active');
-    
-    elements.navLinks.forEach(link => {
-        const isActive = link.dataset.mode === nextMode;
-        link.classList.toggle('active', isActive);
-        isActive ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current');
-    });
-    
-    if (window.innerWidth < 769) toggleSidebar(false);
-    
-    if (nextMode === 'products' && !state.products.initialized) {
-        initializeProducts();
-    }
-  }
-
-  function calculateFee(price, option) { if (option.feeType === 'fixed') return option.value; if (option.feeType === 'percentage') return Math.ceil(price * option.value); return 0; }
-  
-  function updatePriceDetails() { const selectedOptionId = document.querySelector('input[name="payment"]:checked')?.value; if (!selectedOptionId) return; const selectedOption = config.paymentOptions.find(opt => opt.id === selectedOptionId); if (!currentSelectedItem || !selectedOption) return; const price = currentSelectedItem.price; const fee = calculateFee(price, selectedOption); const total = price + fee; elements.paymentModal.fee.textContent = formatToIdr(fee); elements.paymentModal.total.textContent = formatToIdr(total); updateWaLink(selectedOption, fee, total); }
-
-  function updateWaLink(option, fee, total) {
-    const { catLabel = "Produk", title, price } = currentSelectedItem;
-    const text = [
-      config.waGreeting,
-      `\u203A Kategori: ${catLabel}`,
-      `\u203A Item: ${title}`,
-      `\u203A Pembayaran: ${option.name}`,
-      `\u203A Harga: ${formatToIdr(price)}`,
-      `\u203A Fee: ${formatToIdr(fee)}`,
-      `\u203A Total: ${formatToIdr(total)}`,
-    ].join('\n');
-    elements.paymentModal.waBtn.href = `https://wa.me/${config.waNumber}?text=${encodeURIComponent(text)}`;
-  }
-
-  function openPaymentModal(item) {
-    const pageContainer = document.getElementById('pageContainer');
-    const modalContentEl = document.querySelector('#paymentModal .modal-content');
-    if (modalContentEl){ modalContentEl.setAttribute('role','dialog'); modalContentEl.setAttribute('aria-modal','true'); modalContentEl.setAttribute('aria-labelledby','paymentModalTitle'); }
-    const modalTitle = document.querySelector('#paymentModal .modal-header h2');
-    if (modalTitle){ modalTitle.id = 'paymentModalTitle'; }
-    if (pageContainer){ pageContainer.setAttribute('inert',''); }
-    document.documentElement.style.overflow = "hidden"; document.body.style.overflow = "hidden";
-    elementToFocusOnModalClose = document.activeElement;
-    currentSelectedItem = item;
-    const { modal, itemName, itemPrice, optionsContainer } = elements.paymentModal;
-    itemName.textContent = item.title;
-    itemPrice.textContent = formatToIdr(item.price);
-    optionsContainer.innerHTML = '';
-    config.paymentOptions.forEach((option, index) => {
-      const fee = calculateFee(item.price, option);
-      optionsContainer.insertAdjacentHTML('beforeend', ` <div class="payment-option"> <input type="radio" id="${option.id}" name="payment" value="${option.id}" ${index === 0 ? 'checked' : ''}> <label for="${option.id}" tabindex="0"> ${option.name} <span style="float: right;">+ ${formatToIdr(fee)}</span> </label> </div>`);
-    });
-    optionsContainer.querySelectorAll('input[name="payment"]').forEach(input => input.addEventListener('change', updatePriceDetails));
-    updatePriceDetails();
-    modal.style.display = 'flex';
-    setTimeout(() => modal.classList.add('visible'), 10);
-    const focusableEls = modal.querySelectorAll('a[href]:not([disabled]), button:not([disabled]), input[type="radio"]:not([disabled])');
-    modalFocusTrap.focusableEls = Array.from(focusableEls);
-    modalFocusTrap.firstEl = modalFocusTrap.focusableEls[0];
-    modalFocusTrap.lastEl = modalFocusTrap.focusableEls[modalFocusTrap.focusableEls.length - 1];
-    modalFocusTrap.listener = function(e) { if (e.key !== 'Tab') return; if (e.shiftKey) { if (document.activeElement === modalFocusTrap.firstEl) { modalFocusTrap.lastEl.focus(); e.preventDefault(); } } else { if (document.activeElement === modalFocusTrap.lastEl) { modalFocusTrap.firstEl.focus(); e.preventDefault(); } } };
-    modal.addEventListener('keydown', modalFocusTrap.listener);
-    setTimeout(() => modalFocusTrap.firstEl?.focus(), 100);
-  }
-  
-  function closePaymentModal() {
-    const pageContainer = document.getElementById('pageContainer');
-    if (pageContainer){ pageContainer.removeAttribute('inert'); }
-    document.documentElement.style.overflow = ""; document.body.style.overflow = "";
-    const { modal } = elements.paymentModal;
-    modal.classList.remove('visible');
-    if (modalFocusTrap.listener) modal.removeEventListener('keydown', modalFocusTrap.listener);
-    setTimeout(() => {
-      modal.style.display = 'none';
-      currentSelectedItem = null;
-      elementToFocusOnModalClose?.focus();
-    }, 200);
-  }
-
-  // --- FUNGSI BARU UNTUK PRODUK ---
-
-  function populateProductCategorySelect() {
-    const { customSelect } = elements.products;
-    const { options, value } = customSelect;
-    
-    // Ambil kategori unik dari data produk (Kolom C)
-    const categories = ['Semua Kategori', ...new Set(state.products.allData.map(item => item.kategori))];
-    
-    options.innerHTML = '';
-    value.textContent = state.products.activeCategory;
-    
-    categories.forEach((cat) => {
-      const el = document.createElement('div');
-      el.className = 'custom-select-option';
-      el.textContent = cat;
-      el.dataset.value = cat;
-      if (cat === state.products.activeCategory) el.classList.add('selected');
-      el.addEventListener('click', () => {
-        value.textContent = cat;
-        document.querySelector('#productCustomSelectOptions .custom-select-option.selected')?.classList.remove('selected');
-        el.classList.add('selected');
-        toggleCustomSelect(customSelect.wrapper, false);
-        state.products.activeCategory = cat;
-        renderProductCards();
+      
+      ghostBtn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.id;
+        const product = state.accounts.allData.find(p => p.id === id);
+        if (product) {
+          window.open(`https://wa.me/${config.waNumber}?text=${encodeURIComponent(`Halo, tanya ${product.title}`)}`,'_blank','noopener');
+        }
       });
-      options.appendChild(el);
+      
+      list.appendChild(card);
     });
   }
-  
-  // FUNGSI PARSING BARU UNTUK 9 KOLOM
-  async function parseProductsSheet(text) {
-    const rows = robustCsvParser(text);
-    rows.shift(); // Hapus header
-    
-    // Baca 9 kolom: NamaProduk, NamaToko, Kategori, HargaDiskon, HargaAsli, Gambar, Rating, JumlahRating, Tags
-    return rows.filter(row => row && row.length >= 9 && row[0]).map(row => ({
-      namaProduk: row[0] || 'Nama Produk',
-      namaToko: row[1] || 'Nama Toko',
-      kategori: row[2] || 'Lainnya',
-      hargaDiskon: Number(row[3]) || 0,
-      hargaAsli: Number(row[4]) || 0,
-      gambar: row[5] || '',
-      rating: Number(row[6]) || 0,
-      jumlahRating: Number(row[7]) || 0,
-      tags: (row[8] || '').split(',').map(tag => tag.trim()).filter(Boolean),
+
+  // === RENDER: PROMO PAGE ===
+  function renderPromoPage(){
+    const list = els.promoList;
+    list.innerHTML='';
+    const items = [
+      ...config.coupons.map(c=>({ title: c.note, desc: `Min. ${formatToIdr(c.minSubtotal)}`, code: c.code })),
+      { title: 'Gratis Ongkir', desc: `Otomatis, min. ${formatToIdr(config.freeShipping.threshold)}`, code: null }
+    ];
+
+    if (!items.length) {
+      els.promoEmpty.style.display = 'flex';
+      return;
+    }
+    els.promoEmpty.style.display = 'none';
+
+    items.forEach(p=>{
+      const div=document.createElement('div');
+      div.className='promo-item';
+      div.innerHTML = `
+        <div class="promo-info">
+          <span class="title">${p.title}</span>
+          <span class="desc">${p.desc}</span>
+        </div>
+        ${p.code ? `<span class="promo-code">${p.code}</span>` : ''}
+      `;
+      if (p.code) {
+        div.addEventListener('click', ()=>{
+          state.activeCoupon = { code: p.code }; 
+          toast(`Kode ${p.code} diaktifkan`);
+          updateCartSummary(); // Update cart jika sedang dibuka
+        });
+      }
+      list.appendChild(div);
+    });
+  }
+
+  // === RENDER: PAYMENT OPTIONS (di dalam keranjang) ===
+  function renderPaymentOptions() {
+    els.paymentOptionsContainer.innerHTML = '';
+    config.paymentOptions.forEach((opt,i)=>{
+      // Hitung fee awal berdasarkan subtotal 0, akan di-update
+      const fee = calculateFee(0, opt); 
+      els.paymentOptionsContainer.insertAdjacentHTML('beforeend', `
+        <div class="payment-option">
+          <input type="radio" id="${opt.id}" name="payment" value="${opt.id}" ${i===0?'checked':''}>
+          <label for="${opt.id}" tabindex="0">${opt.name} <span style="float:right;">+ ${formatToIdr(fee)}</span></label>
+        </div>`);
+    });
+    // Tambah event listener
+    els.paymentOptionsContainer.querySelectorAll('input[name="payment"]').forEach(inp=> inp.addEventListener('change', (e) => {
+      state.activePayment = e.target.value;
+      updateCartSummary();
     }));
   }
+
+  // === CART (KERANJANG) LOGIC ===
   
-  // FUNGSI RENDER BARU UNTUK TAMPILAN LIST
-  function renderProductCards() {
-    const { cardGrid, cardTemplate, empty } = elements.products;
-    const filteredProducts = state.products.allData.filter(p => state.products.activeCategory === 'Semua Kategori' || p.kategori === state.products.activeCategory);
-    
-    cardGrid.innerHTML = '';
-    empty.style.display = filteredProducts.length === 0 ? 'flex' : 'none';
-    if (filteredProducts.length === 0) return;
-    
-    const fragment = document.createDocumentFragment();
-    filteredProducts.forEach(product => {
-      const cardClone = cardTemplate.content.cloneNode(true);
-      const cardElement = cardClone.querySelector('.product-list-item');
-      
-      // Isi Gambar
-      cardElement.querySelector('.product-image').src = product.gambar;
-      cardElement.querySelector('.product-image').alt = product.namaProduk;
-      
-      // Isi Detail
-      cardElement.querySelector('.product-title').textContent = product.namaProduk;
-      cardElement.querySelector('.product-store-name').textContent = product.namaToko;
-      
-      // Isi Rating
-      const ratingWrapper = cardElement.querySelector('.product-rating-wrapper');
-      if (product.rating > 0) {
-        cardElement.querySelector('.product-rating-score').textContent = product.rating.toFixed(1);
-        cardElement.querySelector('.product-rating-count').textContent = `(${product.jumlahRating})`;
-      } else {
-        ratingWrapper.style.display = 'none';
-      }
-      
-      // Isi Harga
-      const priceWrapper = cardElement.querySelector('.product-price-wrapper');
-      cardElement.querySelector('.product-price-diskon').textContent = formatToIdr(product.hargaDiskon);
-      if (product.hargaAsli > 0 && product.hargaAsli > product.hargaDiskon) {
-        cardElement.querySelector('.product-price-asli').textContent = formatToIdr(product.hargaAsli);
-      } else {
-        cardElement.querySelector('.product-price-asli').style.display = 'none';
-      }
-      
-      // Isi Tags
-      const tagsOnImageContainer = cardElement.querySelector('.product-tags-on-image');
-      const tagsBottomContainer = cardElement.querySelector('.product-tags-bottom');
-      
-      product.tags.forEach(tag => {
-        // Cek jika tag berisi "Diskon" atau "%"
-        if (tag.toLowerCase().includes('diskon') || tag.includes('%')) {
-          const tagEl = document.createElement('span');
-          tagEl.className = 'tag-on-image diskon';
-          tagEl.textContent = tag.replace(/Diskon /i, ''); // Hapus kata "Diskon"
-          tagsOnImageContainer.appendChild(tagEl);
-        } else {
-          const tagEl = document.createElement('span');
-          tagEl.className = 'tag-bottom';
-          tagEl.textContent = tag;
-          tagsBottomContainer.appendChild(tagEl);
-        }
-      });
-      
-      // Tombol Beli
-      cardElement.querySelector('.product-buy-btn').addEventListener('click', () => {
-        openPaymentModal({
-          title: product.namaProduk,
-          price: product.hargaDiskon, // Kirim harga diskon ke modal
-          catLabel: product.kategori
-        });
-      });
-      
-      fragment.appendChild(cardElement);
-    });
-    cardGrid.appendChild(fragment);
+  function addToCart(item) {
+    const existingItem = state.cart.find(cartItem => cartItem.id === item.id);
+    if (existingItem) {
+      existingItem.quantity += 1;
+    } else {
+      state.cart.push({ ...item, quantity: 1 });
+    }
+    updateCart();
   }
   
-  async function initializeProducts() {
-    if (state.products.initialized) return;
-    state.products.initialized = true;
-    const { cardGrid, error, empty } = elements.products;
-    error.style.display = 'none'; empty.style.display = 'none';
-    cardGrid.innerHTML = ''; // Bisa tambahkan skeleton di sini
+  function updateCartItemQuantity(id, change) {
+    const item = state.cart.find(cartItem => cartItem.id === id);
+    if (!item) return;
     
-    try {
-      const accText = await fetchSheetCached(config.sheets.products.name, 'csv');
-      state.products.allData = await parseProductsSheet(accText);
-      populateProductCategorySelect();
-      renderProductCards();
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Fetch Products failed:', err);
-      error.textContent = 'Gagal memuat data produk. Coba lagi nanti.';
-      error.style.display = 'block';
+    item.quantity += change;
+    
+    if (item.quantity <= 0) {
+      // Hapus item dari keranjang
+      state.cart = state.cart.filter(cartItem => cartItem.id !== id);
     }
+    updateCart();
+  }
+  
+  function updateCart() {
+    renderCartItems();
+    updateCartSummary();
+  }
+  
+  function renderCartItems() {
+    els.cartItemsList.innerHTML = '';
+    if (!state.cart.length) {
+      els.cartEmpty.style.display = 'block';
+      els.cartCountBadge.textContent = '0';
+      return;
+    }
+    
+    els.cartEmpty.style.display = 'none';
+    let totalItems = 0;
+    
+    state.cart.forEach(item => {
+      totalItems += item.quantity;
+      const currentPrice = getDiscountPrice(item);
+      const img = item.images[0] || '';
+      
+      const itemEl = document.createElement('div');
+      itemEl.className = 'cart-item';
+      itemEl.innerHTML = `
+        <img class="cart-item-thumb" src="${img}" alt="${item.category}">
+        <div class="cart-item-info">
+          <div class="title">${item.category}</div>
+          <div class="price">${item.quantity} x ${formatToIdr(currentPrice)}</div>
+        </div>
+        <div class="cart-item-actions">
+          <button class="qty-btn" data-id="${item.id}" data-change="-1" aria-label="Kurangi">-</button>
+          <span class="qty-text">${item.quantity}</span>
+          <button class="qty-btn" data-id="${item.id}" data-change="1" aria-label="Tambah">+</button>
+          <button class="remove-btn" data-id="${item.id}" data-change="0" aria-label="Hapus">&times;</button>
+        </div>
+      `;
+      els.cartItemsList.appendChild(itemEl);
+    });
+    
+    // Update badge di header
+    els.cartCountBadge.textContent = totalItems;
+  }
+  
+  function updateCartSummary() {
+    const paymentOption = config.paymentOptions.find(p => p.id === state.activePayment);
+    if (!paymentOption) return;
+
+    // 1. Hitung Subtotal
+    const subtotal = state.cart.reduce((total, item) => {
+      return total + (getDiscountPrice(item) * item.quantity);
+    }, 0);
+    els.cartSubtotal.textContent = formatToIdr(subtotal);
+
+    // 2. Hitung Diskon
+    const couponRes = applyCoupon(subtotal);
+    if (couponRes.discount > 0) {
+      els.cartDiscountRow.style.display = 'flex';
+      els.cartDiscountCode.textContent = couponRes.code;
+      els.cartDiscountAmount.textContent = `- ${formatToIdr(couponRes.discount)}`;
+    } else {
+      els.cartDiscountRow.style.display = 'none';
+    }
+    const afterCoupon = Math.max(0, subtotal - couponRes.discount);
+
+    // 3. Hitung Fee
+    const fee = calculateFee(afterCoupon, paymentOption);
+    els.cartFee.textContent = formatToIdr(fee);
+    
+    // Update label fee di opsi pembayaran
+    els.paymentOptionsContainer.querySelectorAll('label').forEach(label => {
+      const optId = label.getAttribute('for');
+      const opt = config.paymentOptions.find(o => o.id === optId);
+      if(opt) {
+        const reCalcFee = calculateFee(afterCoupon, opt);
+        label.querySelector('span').textContent = `+ ${formatToIdr(reCalcFee)}`;
+      }
+    });
+
+    // 4. Hitung Total
+    const total = afterCoupon + fee;
+    els.cartTotal.textContent = formatToIdr(total);
+    
+    // 5. Update Tombol WA
+    els.continueToWaBtn.href = `https://wa.me/${config.waNumber}?text=${encodeURIComponent(buildCartWAText({
+      subtotal, couponRes, fee, total, paymentOption
+    }))}`;
+  }
+  
+  function buildCartWAText({ subtotal, couponRes, fee, total, paymentOption }) {
+    const parts = [config.waGreeting];
+    
+    // Daftar Item
+    state.cart.forEach(item => {
+      parts.push(`\n- ${item.category} (x${item.quantity})`);
+      parts.push(`  ${formatToIdr(getDiscountPrice(item) * item.quantity)}`);
+    });
+    
+    // Rincian Biaya
+    parts.push("\n*Rincian:*");
+    parts.push(`Subtotal: ${formatToIdr(subtotal)}`);
+    if (couponRes.discount > 0) {
+      parts.push(`Diskon (${couponRes.code}): -${formatToIdr(couponRes.discount)}`);
+    }
+    parts.push(`Pembayaran: ${paymentOption.name}`);
+    parts.push(`Biaya Transaksi: ${formatToIdr(fee)}`);
+    parts.push(`\n*Total: ${formatToIdr(total)}*`);
+    
+    return parts.join('\n');
   }
 
-  // --- INISIALISASI ---
+  // === CART SHEET (Modal) VISIBILITY ===
+  function openCartSheet() {
+    updateCart(); // Selalu update saat dibuka
+    els.cartSheet.style.display = 'flex';
+    setTimeout(() => els.cartSheet.classList.add('visible'), 10);
+  }
+  function closeCartSheet() {
+    els.cartSheet.classList.remove('visible');
+    setTimeout(() => els.cartSheet.style.display = 'none', 300);
+  }
+
+  // === PAGE NAVIGATION ===
+  function showPage(pageId) {
+    // Sembunyikan semua halaman
+    document.querySelectorAll('.page-section').forEach(page => {
+      page.style.display = 'none';
+    });
+    // Tampilkan halaman yang dipilih
+    const pageToShow = $(pageId);
+    if (pageToShow) {
+      pageToShow.style.display = 'block';
+    }
+    // Update status aktif di sidebar
+    els.sidebarNav.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.remove('active');
+      if (item.dataset.page === pageId) {
+        item.classList.add('active');
+      }
+    });
+    // Tutup sidebar
+    document.body.classList.remove('sidebar-open');
+  }
   
-  document.addEventListener('DOMContentLoaded', () => {
-    initializeApp();
-  });
+  // === ORG JSON-LD ===
+  function injectOrgJsonLd(){
+    const el = document.getElementById('orgJsonLd'); if(!el) return;
+    const data = {"@context":"https://schema.org","@type":"Organization","name":"Nama UMKM","url":location.origin,"logo":location.origin + "/assets/images/logo.png","sameAs":[]};
+    el.textContent = JSON.stringify(data);
+  }
+
+  // === INIT ===
+  async function initialize(){
+    updateHeaderStatus(); setInterval(updateHeaderStatus, 60_000);
+    
+    // Muat data produk
+    try{
+      const txt = await fetchSheetCached(config.sheets.accounts.name, 'csv');
+      state.accounts.allData = parseAccountsSheet(txt);
+      renderProductList(state.accounts.allData);
+    }catch(e){
+      console.error(e);
+      els.productEmpty.style.display='flex';
+    }
+    
+    // Render bagian yang statis
+    renderPromoPage();
+    renderPaymentOptions();
+    injectOrgJsonLd();
+
+    // --- Wire Event Listeners ---
+    
+    // Navigasi Sidebar
+    els.burgerBtn.addEventListener('click', () => {
+      document.body.classList.toggle('sidebar-open');
+    });
+    els.sidebarOverlay.addEventListener('click', () => {
+      document.body.classList.remove('sidebar-open');
+    });
+    els.sidebarNav.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        showPage(e.currentTarget.dataset.page);
+      });
+    });
+    
+    // Keranjang (Sheet)
+    els.cartBtn.addEventListener('click', openCartSheet);
+    els.closeSheetBtn.addEventListener('click', closeCartSheet);
+    els.cartSheet.addEventListener('click', (e) => {
+      if(e.target === els.cartSheet) closeCartSheet();
+    });
+    
+    // Aksi di dalam keranjang (Tambah/Kurang/Hapus)
+    els.cartItemsList.addEventListener('click', (e) => {
+      const button = e.target.closest('button');
+      if (!button) return;
+      
+      const { id, change } = button.dataset;
+      if (!id || !change) return;
+      
+      updateCartItemQuantity(id, parseInt(change, 10));
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', initialize);
 })();
