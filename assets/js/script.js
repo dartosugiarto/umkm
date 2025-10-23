@@ -453,7 +453,7 @@
   // === ORG JSON-LD ===
   function injectOrgJsonLd(){
     const el = document.getElementById('orgJsonLd'); if(!el) return;
-    const data = {"@context":"https://schema.org","@type":"Organization","name":"Nama UMKM","url":location.origin,"logo":location.origin + "/assets/images/logo.png","sameAs":[]};
+    const data = {"@context":"https://schema.org","@type":"Organization","name":"Sambal Bejo","url":location.origin,"logo":location.origin + "/assets/images/logo.png","sameAs":[]};
     el.textContent = JSON.stringify(data);
   }
 
