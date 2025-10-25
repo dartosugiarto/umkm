@@ -5,7 +5,7 @@
   const config = {
     sheetId: '10bjcfNHBP6jCnLE87pgk5rXgVS8Qwyu8hc-LXCkdqEE',
     sheets: { accounts: { name: 'Produk' } },
-    waNumber: '628XXXXXXXXX', // GANTI DENGAN NOMOR ANDA
+    waNumber: '628XXXXXXXXX', // GANTI DENGA0N NOMOR ANDA
     waGreeting: '*Halo, saya mau pesan:*',
     flashSale: {
       enabled: true,
@@ -166,6 +166,53 @@
   }
   
   // === RENDER: PRODUCT LIST (Utama) ===
+  
+  // --- FUNGSI ANIMASI BARU ---
+  function animateItemToCart(cardElement) {
+    if (!cardElement) return;
+
+    // 1. Dapatkan posisi elemen produk dan ikon keranjang
+    const productRect = cardElement.getBoundingClientRect();
+    const cartRect = els.cartBtn.getBoundingClientRect();
+
+    // 2. Buat elemen klon untuk animasi
+    const flyingItem = cardElement.cloneNode(true);
+    flyingItem.style.position = 'fixed';
+    flyingItem.style.left = `${productRect.left}px`;
+    flyingItem.style.top = `${productRect.top}px`;
+    flyingItem.style.width = `${productRect.width}px`;
+    flyingItem.style.height = `${productRect.height}px`;
+    flyingItem.style.borderRadius = `var(--radius)`;
+    flyingItem.style.overflow = 'hidden';
+    flyingItem.style.pointerEvents = 'none';
+    flyingItem.style.transition = 'none';
+    flyingItem.style.animation = 'none';
+
+    document.body.appendChild(flyingItem);
+
+    // 3. Hitung transformasi
+    const targetX = cartRect.left + (cartRect.width / 2) - (productRect.width / 2);
+    const targetY = cartRect.top + (cartRect.height / 2) - (productRect.height / 2);
+
+    // Set CSS variabel untuk keyframe animasi
+    flyingItem.style.setProperty('--fly-x', `${targetX - productRect.left}px`);
+    flyingItem.style.setProperty('--fly-y', `${targetY - productRect.top}px`);
+
+    // 4. Trigger animasi
+    flyingItem.style.animation = 'flyToCart .7s forwards cubic-bezier(0.5, 0, 0.7, 0.4)';
+
+    // 5. Animasi ikon keranjang
+    els.cartBtn.classList.add('cart-icon-bump');
+
+    // 6. Hapus elemen klon setelah animasi selesai
+    flyingItem.addEventListener('animationend', () => {
+      flyingItem.remove();
+      // Hapus kelas bump setelah animasi selesai
+      els.cartBtn.classList.remove('cart-icon-bump');
+    });
+  }
+
+  // --- FUNGSI INI DIMODIFIKASI ---
   function renderProductList(items){
     const list = els.productList;
     list.innerHTML='';
@@ -202,7 +249,7 @@
           </div>
         </div>
       `;
-      // --- Event Listeners ---
+      // --- Event Listeners (DIMODIFIKASI) ---
       const primaryBtn = card.querySelector('.btn.btn-primary');
       const ghostBtn = card.querySelector('.btn.btn-ghost');
       
@@ -211,7 +258,8 @@
         const product = state.accounts.allData.find(p => p.id === id);
         if (product) {
           addToCart(product);
-          toast(`${product.category} ditambah ke keranjang`);
+          // toast(`${product.category} ditambah ke keranjang`); // <-- Dihapus
+          animateItemToCart(card); // <-- Diganti dengan ini
         }
       });
       
@@ -227,7 +275,7 @@
     });
   }
 
-  // === RENDER: PROMO PAGE ===
+  // === RENDER: PROMO PAGE (FUNGSI INI DIGANTI TOTAL) ===
   function renderPromoPage(){
     const list = els.promoList;
     list.innerHTML='';
@@ -245,6 +293,11 @@
     items.forEach(p=>{
       const div=document.createElement('div');
       div.className='promo-item';
+      // Set status aktif jika cocok dengan state
+      if (state.activeCoupon && state.activeCoupon.code === p.code) {
+        div.classList.add('active');
+      }
+      
       div.innerHTML = `
         <div class="promo-info">
           <span class="title">${p.title}</span>
@@ -252,10 +305,25 @@
         </div>
         ${p.code ? `<span class="promo-code">${p.code}</span>` : ''}
       `;
+      
       if (p.code) {
         div.addEventListener('click', ()=>{
-          state.activeCoupon = { code: p.code }; 
-          toast(`Kode ${p.code} diaktifkan`);
+          const currentlyActive = div.classList.contains('active');
+          
+          // 1. Hapus semua status aktif
+          list.querySelectorAll('.promo-item').forEach(item => item.classList.remove('active'));
+          
+          if (currentlyActive) {
+            // 2. Jika diklik saat aktif, batalkan
+            state.activeCoupon = null; 
+            toast(`Voucher dibatalkan`);
+          } else {
+            // 3. Jika diklik saat non-aktif, aktifkan
+            div.classList.add('active'); // Tambah feedback visual
+            state.activeCoupon = { code: p.code }; 
+            toast(`Kode ${p.code} diaktifkan`);
+          }
+          
           updateCartSummary(); // Update cart jika sedang dibuka
         });
       }
@@ -428,17 +496,26 @@
     setTimeout(() => els.cartSheet.style.display = 'none', 300);
   }
 
-  // === PAGE NAVIGATION ===
+  // === PAGE NAVIGATION (FUNGSI INI DIGANTI TOTAL) ===
   function showPage(pageId) {
-    // Sembunyikan semua halaman
-    document.querySelectorAll('.page-section').forEach(page => {
-      page.style.display = 'none';
-    });
-    // Tampilkan halaman yang dipilih
+    const allPages = document.querySelectorAll('.page-section');
     const pageToShow = $(pageId);
-    if (pageToShow) {
-      pageToShow.style.display = 'block';
-    }
+
+    allPages.forEach(page => {
+      if (page.id === pageId) {
+        // Tampilkan halaman baru
+        page.style.display = 'block';
+        page.classList.remove('is-hiding');
+      } else if (page.style.display === 'block' && !page.classList.contains('is-hiding')) {
+        // Sembunyikan halaman lama dengan animasi
+        page.classList.add('is-hiding');
+        // Set display:none HANYA setelah animasi selesai
+        setTimeout(() => {
+          page.style.display = 'none';
+        }, 200); // Durasi harus cocok dengan animasi fadeOut di CSS
+      }
+    });
+
     // Update status aktif di sidebar
     els.sidebarNav.querySelectorAll('.nav-item').forEach(item => {
       item.classList.remove('active');
